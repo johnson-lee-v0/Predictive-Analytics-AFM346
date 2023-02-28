@@ -1,0 +1,344 @@
+---
+title: "Final-Project-Best-Performing"
+author: "Johnson_Lee"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(forcats)
+library(knitr)
+library(yardstick)
+library(tidyverse)
+library(tidymodels)
+library(glmnet)
+library(vip)
+library(kernlab)
+library(tictoc)
+```
+
+# Load Data
+```{r}
+data<-read.csv('default of credit card clients - adapted.csv')
+data<-data%>%mutate_if(is.character, as.factor)
+data <- data %>%
+    mutate(is_default = fct_relevel(is_default, 'Yes'))
+```
+
+# Set Metrics
+```{r}
+metric <- metric_set(roc_auc, accuracy, precision, recall)
+```
+
+# Split Data into Testing / Training
+```{r}
+set.seed(703412697)
+data_split<-initial_split(data, prop = 0.75,strata=is_default)
+data_split
+
+data_train<-training(data_split)
+data_test<-testing(data_split)
+```
+
+# Cross Validation Setup
+```{r}
+set.seed(64749068)
+data_folds <- data_train %>% 
+  vfold_cv(v=10, strata=is_default, repeats=3)
+```
+
+# Base Recipe (For Neural Networks)
+```{r}
+best_perform_base_recipe<-
+recipe(is_default~., data=data_train)%>%
+  step_dummy(gender,educ_level,marital)%>%
+  step_zv(all_predictors(),-all_outcomes())%>%
+  step_corr(all_predictors(),-all_outcomes())%>%
+  step_normalize(all_numeric_predictors(), -all_outcomes())%>%
+  step_YeoJohnson(all_numeric_predictors(), -all_outcomes())
+
+```
+
+# Enhanced Recipe (Base Recipe + Feature Engineered)
+```{r}
+best_perform_enhanced_recipe<-
+recipe(is_default~., data=data_train)%>%
+  step_mutate_at(matches('_amount[1-6]'), fn = as.numeric) %>%
+    step_mutate(
+        bill_amount_credit1 = bill_amount1 < 0,
+        bill_amount_credit2 = bill_amount2 < 0,
+        bill_amount_credit3 = bill_amount3 < 0,
+        bill_amount_credit4 = bill_amount4 < 0,
+        bill_amount_credit5 = bill_amount5 < 0,
+        bill_amount_credit6 = bill_amount6 < 0
+        ) %>%
+    step_mutate_at(matches('credit'), fn = as.numeric) %>%
+    step_mutate_at(matches('bill_amount[1-6]'), fn = ~ if_else(. < 0, 0, .))%>%
+    step_mutate_at(matches('_[0-6]'), fn = as.numeric) %>%
+  step_mutate(
+    repayment_status0 = pay_0 <0,
+    repayment_status2 = pay_2 <0,
+    repayment_status3 = pay_3 <0,
+    repayment_status4 = pay_4 <0,
+    repayment_status5 = pay_5 <0,
+    repayment_status6 = pay_6 <0)%>%
+  step_mutate_at(matches('status'), fn = as.numeric) %>%
+  step_mutate_at(matches('pay[0-6]'), fn = ~ if_else(. < 0, 0, .))%>%
+  step_mutate(
+    balance1 = bill_amount1-pay_amount1,
+    balance2 = bill_amount2-pay_amount2,
+    balance3 = bill_amount3-pay_amount3,
+    balance4 = bill_amount4-pay_amount4,
+    balance5 = bill_amount5-pay_amount5,
+  balance6 = bill_amount6-pay_amount6
+)%>%
+  step_mutate_at(matches('balance'), fn = as.numeric) %>%
+  step_mutate_at(matches('bill_amount[1-6]','pay_amount[1-6]'), fn = ~ if_else(. < 0, 0, .))%>%
+  step_dummy(gender,educ_level,marital)%>%
+  step_zv(all_predictors(),-all_outcomes())%>%
+  step_corr(all_predictors(),-all_outcomes())
+```
+
+# Setting up Neural Networks
+```{r}
+neuralnetworks_model <-
+     mlp(hidden_units = tune(),
+        penalty = tune()) %>%
+    set_mode(('classification')) %>%
+    set_engine('nnet')
+```
+
+# Inital Grid
+```{r}
+set.seed(513116099)
+best_perform_grid<-grid_latin_hypercube(
+  hidden_units(),
+  penalty(),size=25
+)
+```
+
+# Workflows
+```{r}
+best_perform_base_wf<-
+  workflow()%>%
+  add_recipe(best_perform_base_recipe)%>%
+  add_model(neuralnetworks_model)
+best_perform_base_parameters<-extract_parameter_set_dials(best_perform_base_wf)
+best_perform_base_parameters
+
+best_perform_enhanced_wf<-
+  workflow()%>%
+  add_recipe(best_perform_enhanced_recipe)%>%
+  add_model(neuralnetworks_model)
+best_perform_enhanced_parameters<-extract_parameter_set_dials(best_perform_enhanced_wf)
+best_perform_enhanced_parameters
+```
+
+# First Tune
+## Base Recipe
+```{r}
+library(doParallel)
+
+number_of_cores <- parallel::detectCores(logical = FALSE)
+cluster <- makePSOCKcluster(number_of_cores)
+registerDoParallel(cluster)
+
+tic()
+best_perform_base_tune<-
+  best_perform_base_wf%>%
+  tune_grid(data_folds,
+            grid=best_perform_grid,
+            control = control_resamples(save_pred = TRUE),
+            metrics=metric)
+toc()
+stopCluster(cluster)
+```
+
+## Enhanced Recipe
+```{r}
+library(doParallel)
+
+number_of_cores <- parallel::detectCores(logical = FALSE)
+cluster <- makePSOCKcluster(number_of_cores)
+registerDoParallel(cluster)
+
+tic()
+
+best_perform_enhanced_tune<-
+  best_perform_enhanced_wf%>%
+  tune_grid(data_folds,
+            grid=best_perform_grid,
+            control = control_resamples(save_pred = TRUE),
+            metrics=metric)
+
+toc()
+stopCluster(cluster)
+```
+
+## Collecting Metrics from Tune Above
+```{r}
+best_perform_base_metric<-
+  best_perform_base_tune%>%
+  collect_metrics()
+
+best_perform_enhanced_metric<-
+  best_perform_enhanced_tune%>%
+  collect_metrics()
+```
+
+## Visualization of Performance
+### Base Recipe Performance
+```{r}
+best_perform_base_metric %>% 
+  ggplot(aes(x = hidden_units, y = mean,color=penalty)) + 
+  geom_point() + 
+  facet_wrap(~.metric,scales = 'free_y')+
+  labs(title = "Neural Networks Performance",
+       subtitle = "Base Recipe")
+```
+
+```{r}
+best_perform_base_tune%>%show_best(metric='roc_auc')
+```
+
+### Enhanced Recipe Performance
+```{r}
+best_perform_enhanced_metric %>% 
+  ggplot(aes(x = hidden_units, y = mean,color=penalty)) + 
+  geom_point() + 
+  facet_wrap(~.metric,scales = 'free_y') +
+  labs(title = "Neural Networks Performance",
+       subtitle = "Enhanced Recipe")
+```
+
+```{r}
+best_perform_enhanced_tune%>%show_best(metric='roc_auc')
+```
+
+# Tune Second Model
+
+## Updating Grid Based on Model Outputs Above
+```{r}
+set.seed(513116099)
+best_perform_grid_improv<-grid_regular(
+  hidden_units(range=c(4,5)),
+  penalty(range=c(-0.1,0.1)),
+  levels=c(25)
+  )%>%signif(digits = 10)
+```
+
+
+## Re-Running Tuning With Updated Grid
+
+Due to limited computational power only the base recipe was ran for second tuning as it performed better than enhanced recipe
+```{r}
+library(doParallel)
+
+number_of_cores <- parallel::detectCores(logical = FALSE)
+cluster <- makePSOCKcluster(number_of_cores)
+registerDoParallel(cluster)
+
+tic()
+best_perform_base_tune_update<-
+  best_perform_base_wf%>%
+  tune_grid(data_folds,
+            grid=best_perform_grid_improv,
+            control = control_resamples(save_pred = TRUE),
+            metrics=metric)
+
+toc()
+stopCluster(cluster)
+```
+## Collecting Metrics
+```{r}
+best_perform_base_update_metric<-
+  best_perform_base_tune_update%>%
+  collect_metrics()
+```
+
+## Visualization of Performance
+```{r}
+best_perform_base_update_metric %>% 
+  ggplot(aes(x = hidden_units, y = mean,color=penalty)) + 
+  geom_point() + 
+  facet_wrap(~.metric,scales = 'free_y')+
+  labs(title = "Neural Networks Performance",
+       subtitle = "Base Recipe with Updated Grid")
+```
+
+```{r}
+ best_perform_base_tune_update%>%show_best(metric = 'roc_auc')
+```
+
+# Best Model's Parameters
+```{r}
+best_parameters_base<-best_perform_base_tune_update%>%select_best(metric = 'roc_auc')
+```
+
+# Updating Workflow and Fitting Train Data
+```{r}
+final_workflow_base_update <- finalize_workflow(best_perform_base_wf,
+                                    parameters=best_parameters_base )
+
+final_fit_base_update <- final_workflow_base_update  %>%
+    fit(data = data_train)
+```
+
+# Creating Predictions on Test Data
+```{r}
+final_predictions_base_update <- predict(final_fit_base_update, 
+                                new_data = data_test)
+
+final_predictions_prob_base_update <- predict(final_fit_base_update, 
+                                     new_data = data_test,
+                                     type = 'prob')
+
+data_test <- data_test %>%
+    bind_cols(final_predictions_base_update, 
+              final_predictions_prob_base_update)
+
+
+```
+
+# Generating Performance Metrics
+```{r}
+
+final_metrics_base_update <- data_test %>%
+    metrics(truth = is_default, estimate = .pred_class,class1=.pred_Yes)
+final_metrics_base_update%>%kable(digits = 4)
+```
+
+# Confusion Matrix
+```{r}
+data_test %>%
+    conf_mat(truth = is_default, estimate = .pred_class)
+```
+
+# ROC Curve
+```{r}
+data_test %>%
+    roc_curve(truth = is_default,class1=.pred_Yes)%>%
+  autoplot
+```
+# Precision-Recall Curve
+```{r}
+data_test %>%
+    pr_curve(truth = is_default,class1=.pred_Yes)%>%
+  autoplot
+```
+
+# Feature Importance
+```{r}
+final_fit_base_update%>%
+  extract_fit_parsnip()%>%
+  vip()
+```
+
+# Saving Important Objects
+```{r}
+save(data_test,best_perform_base_tune,best_perform_enhanced_tune,best_perform_base_tune_update,final_workflow_base_update,final_metrics_base_update,
+     file = 'best_performing_objects.Rda')
+```

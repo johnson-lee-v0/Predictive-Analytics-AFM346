@@ -1,0 +1,318 @@
+---
+title: "Final-Project-Baseline"
+author: "Johnson_Lee"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(forcats)
+library(knitr)
+library(yardstick)
+library(tidyverse)
+library(tidymodels)
+library(glmnet)
+library(vip)
+library(kernlab)
+```
+
+# Load Data
+```{r}
+data<-read.csv('default of credit card clients - adapted.csv')
+data<-data%>%mutate_if(is.character, as.factor)
+data <- data %>%
+    mutate(is_default = fct_relevel(is_default, 'Yes'))
+```
+
+# Set Metrics
+```{r}
+metric <- metric_set(roc_auc, accuracy, precision, recall)
+```
+
+# Split Data into Testing / Training
+```{r}
+set.seed(703412697)
+data_split<-initial_split(data, prop = 0.75,strata=is_default)
+data_split
+
+data_train<-training(data_split)
+data_test<-testing(data_split)
+```
+
+# Cross Validation Setup
+```{r}
+set.seed(64749068)
+data_folds <- data_train %>% 
+  vfold_cv(v=10, strata=is_default, repeats=3)
+```
+
+# Base Recipe (For Logistic Regression)
+```{r}
+baseline_base_recipe<-
+recipe(is_default~., data=data_train)%>%
+  step_dummy(gender,educ_level,marital)%>%
+  step_zv(all_predictors(),-all_outcomes())%>%
+  step_corr(all_predictors(),-all_outcomes())
+
+```
+
+# Enhanced Recipe (Base Recipe + Feature Engineered)
+```{r}
+baseline_enhanced_recipe<-
+recipe(is_default~., data=data_train)%>%
+  step_mutate_at(matches('_amount[1-6]'), fn = as.numeric) %>%
+    step_mutate(
+        bill_amount_credit1 = bill_amount1 < 0,
+        bill_amount_credit2 = bill_amount2 < 0,
+        bill_amount_credit3 = bill_amount3 < 0,
+        bill_amount_credit4 = bill_amount4 < 0,
+        bill_amount_credit5 = bill_amount5 < 0,
+        bill_amount_credit6 = bill_amount6 < 0
+        ) %>%
+    step_mutate_at(matches('credit'), fn = as.numeric) %>%
+    step_mutate_at(matches('bill_amount[1-6]'), fn = ~ if_else(. < 0, 0, .))%>%
+    step_mutate_at(matches('_[0-6]'), fn = as.numeric) %>%
+  step_mutate(
+    repayment_status0 = pay_0 <0,
+    repayment_status2 = pay_2 <0,
+    repayment_status3 = pay_3 <0,
+    repayment_status4 = pay_4 <0,
+    repayment_status5 = pay_5 <0,
+    repayment_status6 = pay_6 <0)%>%
+  step_mutate_at(matches('status'), fn = as.numeric) %>%
+  step_mutate_at(matches('pay[0-6]'), fn = ~ if_else(. < 0, 0, .))%>%
+  step_mutate(
+    balance1 = bill_amount1-pay_amount1,
+    balance2 = bill_amount2-pay_amount2,
+    balance3 = bill_amount3-pay_amount3,
+    balance4 = bill_amount4-pay_amount4,
+    balance5 = bill_amount5-pay_amount5,
+  balance6 = bill_amount6-pay_amount6
+)%>%
+  step_mutate_at(matches('balance'), fn = as.numeric) %>%
+  step_mutate_at(matches('bill_amount[1-6]','pay_amount[1-6]'), fn = ~ if_else(. < 0, 0, .))%>%
+  step_dummy(gender,educ_level,marital)%>%
+  step_zv(all_predictors(),-all_outcomes())%>%
+  step_corr(all_predictors(),-all_outcomes())
+```
+
+# Setting up Logistic Regression
+```{r}
+log_reg_model <-
+    logistic_reg(penalty=tune(),mixture=1) %>%
+    set_engine('glmnet')
+```
+
+# Inital Grid
+```{r}
+set.seed(513116099)
+baseline_grid<-grid_latin_hypercube(
+  penalty(),size=25
+)
+```
+
+# Workflows
+```{r}
+baseline_base_wf<-
+  workflow()%>%
+  add_recipe(baseline_base_recipe)%>%
+  add_model(log_reg_model)
+baseline_base_parameters<-extract_parameter_set_dials(baseline_base_wf)
+baseline_base_parameters
+
+baseline_enhanced_wf<-
+  workflow()%>%
+  add_recipe(baseline_enhanced_recipe)%>%
+  add_model(log_reg_model)
+baseline_enhanced_parameters<-extract_parameter_set_dials(baseline_enhanced_wf)
+baseline_enhanced_parameters
+```
+
+# First Tune
+## Base Recipe
+```{r, message=FALSE,warning=FALSE}
+baseline_base_tune<-
+  baseline_base_wf%>%
+  tune_grid(data_folds,
+            grid=baseline_grid,
+            control = control_resamples(save_pred = TRUE),
+            metrics=metric)
+```
+## Enhanced Recipe
+```{r, message=FALSE,warning=FALSE}
+baseline_enhanced_tune<-
+  baseline_enhanced_wf%>%
+  tune_grid(data_folds,
+            grid=baseline_grid,
+            control = control_resamples(save_pred = TRUE),
+            metrics=metric)
+```
+## Collecting Metrics from Tune Above
+```{r}
+baseline_base_metric<-
+  baseline_base_tune%>%
+  collect_metrics()
+
+baseline_enhanced_metric<-
+  baseline_enhanced_tune%>%
+  collect_metrics()
+```
+
+## Visualization of Performance
+### Base Recipe Performance
+```{r}
+baseline_base_metric %>% 
+  ggplot(aes(x = penalty, y = mean)) + 
+  geom_point() + 
+  geom_line() + 
+  facet_wrap(~.metric,scales = 'free_y')
+```
+```{r}
+baseline_base_tune%>%show_best(metric='roc_auc')
+```
+
+### Enhanced Recipe Performance
+```{r}
+baseline_enhanced_metric %>% 
+  ggplot(aes(x = penalty, y = mean)) + 
+  geom_point() + 
+  geom_line() + 
+  facet_wrap(~.metric,scales = 'free_y')
+```
+
+
+```{r}
+baseline_enhanced_tune%>%show_best(metric='roc_auc')
+```
+
+# Tune Second Model
+
+## Updating Grid Based on Model Outputs Above
+```{r}
+set.seed(513116099)
+baseline_grid_improv<-grid_regular(
+  penalty(range= c(-10,0.1)),
+  levels=c(25)
+  )%>%signif(digits = 10)
+```
+
+## Re-Running Tuning With Updated Grid
+```{r, message=FALSE,warning=FALSE}
+baseline_base_tune_update<-
+  baseline_base_wf%>%
+  tune_grid(data_folds,
+            grid=baseline_grid_improv,
+            control = control_resamples(save_pred = TRUE),
+            metrics=metric)
+
+baseline_enhanced_tune_update<-
+  baseline_enhanced_wf%>%
+  tune_grid(data_folds,
+            grid=baseline_grid_improv,
+            control = control_resamples(save_pred = TRUE),
+           metrics=metric)
+```
+
+## Collecting Metrics
+```{r}
+baseline_base_update_metric<-
+  baseline_base_tune_update%>%
+  collect_metrics()
+
+baseline_enhanced_update_metric<-
+  baseline_enhanced_tune_update%>%
+  collect_metrics()
+```
+
+## Visualization of Performance
+### Base Recipe with Updated Grid
+```{r}
+baseline_base_update_metric %>% 
+  ggplot(aes(x = penalty, y = mean)) + 
+  geom_point() + 
+  geom_line() + 
+  facet_wrap(~.metric,scales = 'free_y')
+```
+
+```{r}
+ baseline_base_tune_update%>%show_best(metric = 'roc_auc')
+```
+
+### Enhanced Recipe with Updated Grid
+```{r}
+baseline_enhanced_update_metric %>% 
+  ggplot(aes(x = penalty, y = mean)) + 
+  geom_point() + 
+  geom_line() + 
+  facet_wrap(~.metric,scales = 'free_y')
+```
+
+```{r}
+ baseline_enhanced_tune_update%>%show_best(metric = 'roc_auc')
+```
+
+# Best Model's Parameters
+```{r}
+best_parameters_enhanced_update<-baseline_enhanced_tune_update%>%select_best(metric = 'roc_auc')
+```
+
+# Updating Workflow and Fitting Train Data
+```{r}
+final_workflow_enhanced_update <- finalize_workflow(baseline_enhanced_wf,
+                                    parameters=best_parameters_enhanced_update )
+
+final_fit_enhanced_update <- final_workflow_enhanced_update  %>%
+    fit(data = data_train)
+```
+
+# Creating Predictions on Test Data
+```{r}
+final_predictions_enhanced_update <- predict(final_fit_enhanced_update, 
+                                new_data = data_test)
+
+final_predictions_prob_enhanced_update <- predict(final_fit_enhanced_update, 
+                                     new_data = data_test,
+                                     type = 'prob')
+
+data_test <- data_test %>%
+    bind_cols(final_predictions_enhanced_update, 
+              final_predictions_prob_enhanced_update)
+
+
+```
+
+# Generating Performance Metrics
+```{r}
+
+final_metrics_enhanced_update <- data_test %>%
+    metrics(truth = is_default, estimate = .pred_class,class1=.pred_Yes)
+final_metrics_enhanced_update%>%kable(digits = 4)
+```
+
+# Confusion Matrix
+```{r}
+data_test %>%
+    conf_mat(truth = is_default, estimate = .pred_class)
+```
+
+# ROC Curve
+```{r}
+data_test %>%
+    roc_curve(truth = is_default,class1=.pred_Yes)%>%
+  autoplot
+```
+
+# Precision-Recall Curve
+```{r}
+data_test %>%
+    pr_curve(truth = is_default,class1=.pred_Yes)%>%
+  autoplot
+```
+
+# Saving Important Objects
+```{r}
+save(data_test,final_workflow_enhanced_update,final_metrics_enhanced_update,
+     file = 'baseline_objects.Rda')
+```
