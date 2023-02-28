@@ -1,0 +1,221 @@
+---
+title: "Assignment-4-RF"
+author: "Johnson_Lee"
+date: '2022-07-03'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(forcats)
+library(knitr)
+library(yardstick)
+library(tidyverse)
+library(tidymodels)
+library(glmnet)
+library(vip)
+library(ranger)
+```
+
+# Importing Data
+```{r}
+data<-read.csv('nasdaq_lagged.csv')
+```
+
+# Setup for Metrics
+```{r}
+metric <- metric_set(roc_auc, accuracy, precision, recall)
+```
+
+# Data Split
+```{r}
+set.seed(2673)
+data_split<-initial_split(data, prop = 0.75,strata=Up_Down)
+data_split
+data_train<-training(data_split)
+data_test<-testing(data_split)
+```
+
+>Also, decide whether year should be a predictor (and why)
+
+Although year is not the strongest predictor for the direction of the market but the market is known to increase over time based on theory finance so it was included in the analysis.
+
+# CV Folds
+```{r}
+set.seed(548)
+data_folds <- data_train %>% 
+  vfold_cv(v=10, strata=Up_Down, repeats=3)
+```
+
+# Base Recipe
+```{r}
+rf_base_recipe<-
+  recipe(Up_Down~ ., data = data_train)%>%
+  step_zv(all_numeric(), -all_outcomes()) %>%
+  step_corr(all_numeric(), -all_outcomes())
+```
+
+```{r}
+rf_enhanced_recipe <- 
+ rf_base_recipe%>%
+  step_bs(-Up_Down)
+```
+
+# Create Model
+```{r}
+rf_model <-
+    rand_forest(trees = tune(),
+                mtry = tune()) %>%
+    set_mode(('classification')) %>%
+    set_engine('ranger', importance = "impurity")
+```
+
+# Hyperparameters
+# Random Forest Grid
+```{r}
+set.seed(123)
+rf_grid <- grid_regular(
+  trees(range = c(10, 100)),
+  finalize(mtry(), data_train),
+  levels = c(10,10)
+  )
+```
+
+```{r}
+rf_base_wf <- 
+  workflow() %>%
+  add_recipe(rf_base_recipe) %>%
+  add_model(rf_model)
+extract_parameter_set_dials(rf_base_wf)
+
+rf_enhanced_wf <- 
+  workflow() %>%
+  add_recipe(rf_enhanced_recipe) %>%
+  add_model(rf_model)
+extract_parameter_set_dials(rf_enhanced_wf)
+```
+
+```{r, warning=FALSE, message=FALSE}
+rf_base_tune<-
+  rf_base_wf%>%
+  tune_grid(
+    data_folds,
+    grid=rf_grid,
+    metrics= metric,
+    control = control_resamples(save_pred = TRUE))
+
+rf_enhanced_tune<-
+  rf_enhanced_wf%>%
+  tune_grid(
+    data_folds,
+    grid=rf_grid,
+    metrics= metric,
+    control = control_resamples(save_pred = TRUE))
+```
+
+```{r}
+rf_base_metric<-
+  rf_base_tune%>%
+  collect_metrics()
+
+rf_enhanced_metric<-
+  rf_enhanced_tune%>%
+  collect_metrics()
+```
+
+```{r}
+rf_base_tune%>%
+collect_metrics()%>%
+ggplot(aes(x = mtry, y = mean,
+             colour = trees)) +
+  geom_point() +
+  geom_line(aes(group = trees)) +
+  facet_wrap(~.metric, scales = "free_y") +
+  guides(colour = guide_legend(title = 'Trees')) +
+  labs(title = "Random Forest Trees Performance",
+       subtitle = "Base Recipe",
+       x = "Mtry", y = "Performance")
+```
+
+```{r}
+rf_base_tune %>%
+  show_best(metric = "roc_auc") %>%
+  kable(digits = 3)
+```
+
+```{r}
+rf_enhanced_tune%>%
+collect_metrics()%>%
+ggplot(aes(x = mtry, y = mean,
+             colour = trees)) +
+  geom_point() +
+  geom_line(aes(group = trees)) +
+  facet_wrap(~.metric, scales = "free_y") +
+  guides(colour = guide_legend(title = 'Trees')) +
+  labs(title = "Random Forest Trees Performance",
+       subtitle = "Enhanced Recipe",
+       x = "Mtry", y = "Performance")
+```
+
+```{r}
+rf_enhanced_tune %>%
+  show_best(metric = "roc_auc") %>%
+  kable(digits = 3)
+```
+
+
+```{r}
+best_base_model<-    
+    rand_forest(trees = 100,
+          mtry = 3) %>%
+    set_mode(('classification')) %>%
+    set_engine('ranger', importance = "impurity")
+  
+best_base_wf<-
+  rf_base_wf%>%
+  update_model(best_base_model)
+
+best_base_fit<-
+  best_base_wf%>%
+  last_fit(data_split)
+
+best_base_fit%>%
+extract_fit_parsnip() %>% 
+  vip(num_features = 10)
+```
+
+```{r}
+best_enhanced_model<-    
+    rand_forest(trees = 100,
+          mtry = 3) %>%
+    set_mode(('classification')) %>%
+    set_engine('ranger', importance = "impurity")
+  
+best_enhanced_wf<-
+  rf_enhanced_wf%>%
+  update_model(best_enhanced_model)
+
+best_enhanced_fit<-
+  best_enhanced_wf%>%
+  last_fit(data_split)
+
+best_enhanced_fit%>%
+extract_fit_parsnip() %>% 
+  vip(num_features = 20)
+```
+
+```{r}
+best_rf_base_model<-select_best(rf_base_tune)
+rf_base_tune%>%conf_mat_resampled(parameters = best_rf_base_model)
+```
+
+```{r}
+best_rf_enhanced_model<-select_best(rf_enhanced_tune)
+rf_enhanced_tune%>%conf_mat_resampled(parameters = best_rf_enhanced_model)
+```
+
+```{r}
+save(rf_base_metric, best_base_wf, best_base_model,
+     file = 'rf_base_objects.Rda')
+```

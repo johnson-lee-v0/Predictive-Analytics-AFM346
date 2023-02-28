@@ -1,0 +1,312 @@
+---
+title: "Assignment 5 - RBF SVM"
+author: "Johnson_Lee"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 1
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(forcats)
+library(knitr)
+library(yardstick)
+library(tidyverse)
+library(tidymodels)
+library(glmnet)
+library(vip)
+library(kernlab)
+```
+
+# Importing Data
+```{r}
+data<-read.csv('nasdaq_lagged_2015_2019.csv')
+```
+
+# Setup for Metrics
+```{r}
+metric <- metric_set(roc_auc, accuracy, precision, recall)
+```
+
+# Data Split
+```{r}
+set.seed(2673)
+data_split<-initial_split(data, prop = 0.75,strata=Up_Down)
+data_split
+data_train<-training(data_split)
+data_test<-testing(data_split)
+```
+
+>Also, decide whether year should be a predictor (and why)
+
+Although year is not the strongest predictor for the direction of the market but the market is known to increase over time based on theory finance so it was included in the analysis.
+
+# CV Folds
+```{r}
+set.seed(548)
+data_folds <- data_train %>% 
+  vfold_cv(v=10, strata=Up_Down, repeats=3)
+```
+
+# Base Recipe
+
+Used all recommended pre-processing method suggested
+
+```{r}
+rbfsvm_base_recipe<-
+  recipe(Up_Down~ ., data = data_train)%>%
+  step_zv(all_numeric_predictors(), -all_outcomes()) %>%
+  step_normalize(all_numeric_predictors(), -all_outcomes()) %>%
+  step_YeoJohnson(all_numeric_predictors(), -all_outcomes())%>%
+  step_corr(all_numeric_predictors(), -all_outcomes())
+```
+
+Included basis expansion to allow for fitting non-linear models
+
+```{r}
+rbfsvm_enhanced_recipe <- 
+ rbfsvm_base_recipe%>%
+  step_bs(-Up_Down)
+```
+
+# Create Model
+
+Hyperparameters of sigma and cost (margin) were used. Based on suggestion of dials
+
+```{r}
+rbfsvm_model <-
+     svm_rbf(rbf_sigma = tune(),
+             cost = tune()) %>%
+    set_mode(('classification')) %>%
+    set_engine('kernlab',importance = "impurity")
+```
+
+# Hyperparameters
+# Random Forest Grid
+
+Creating Latin HyperCube grid to tune the model later
+
+```{r}
+set.seed(123)
+rbfsvm_grid <- grid_latin_hypercube(
+  rbf_sigma(),
+  cost(),
+  size= 25
+  )
+```
+
+# Building Workflow
+
+```{r}
+rbfsvm_base_wf <- 
+  workflow() %>%
+  add_recipe(rbfsvm_base_recipe) %>%
+  add_model(rbfsvm_model)
+rbfsvm_base_parameters<-extract_parameter_set_dials(rbfsvm_base_wf)
+
+rbfsvm_enhanced_wf <- 
+  workflow() %>%
+  add_recipe(rbfsvm_enhanced_recipe) %>%
+  add_model(rbfsvm_model)
+rbfsvm_enhanced_parameters<-extract_parameter_set_dials(rbfsvm_enhanced_wf)
+```
+
+# Tuning Parameters with Grid
+
+```{r, warning=FALSE,message=FALSE}
+rbfsvm_base_tune<-
+  rbfsvm_base_wf%>%
+  tune_grid(
+    data_folds,
+    grid=rbfsvm_grid,
+    metrics= metric,
+    control = control_resamples(save_pred = TRUE))
+
+rbfsvm_enhanced_tune<-
+  rbfsvm_enhanced_wf%>%
+  tune_grid(
+    data_folds,
+    grid=rbfsvm_grid,
+    metrics= metric,
+    control = control_resamples(save_pred = TRUE))
+
+```
+
+# Collecting Metrics (Created for Exporting)
+
+```{r}
+rbfsvm_base_metric<-
+  rbfsvm_base_tune%>%
+  collect_metrics()
+
+rbfsvm_enhanced_metric<-
+  rbfsvm_enhanced_tune%>%
+  collect_metrics()
+```
+
+# Visualizing Performance
+
+```{r}
+rbfsvm_base_tune%>%
+collect_metrics()%>%
+ggplot(aes(x = cost, y = mean,color=rbf_sigma)) +
+  geom_point() +
+  scale_x_log10()  +
+  facet_wrap(~.metric, scales = "free_y") +
+  guides(colour = guide_legend(title = 'RBF_Sigma')) +
+  labs(title = "RBF SVM Performance",
+       subtitle = "Base Recipe",
+       x = "Cost", y = "Performance")
+```
+
+Using `show_best` to view model performance based on optimization metric
+
+```{r}
+rbfsvm_base_tune %>%
+  show_best(metric = "roc_auc") %>%
+  kable(digits = 3)
+```
+
+Using `select_best` to isolate the best model
+
+```{r}
+rbfsvm_base_tune %>%
+  select_best(metric = "roc_auc")%>%
+  kable(digits = 3) 
+```
+
+Pulling all metrics for the best model
+
+```{r}
+rbfsvm_base_metric%>%
+  subset(.config == 'Preprocessor1_Model02')%>%
+  kable(digits = 3)
+```
+
+Same process as mentioned above for base recipe was applied to the Enhanced Recipe
+
+```{r}
+rbfsvm_enhanced_tune%>%
+collect_metrics()%>%
+ggplot(aes(x = cost, y = mean,color=rbf_sigma)) +
+  geom_point() +
+  scale_x_log10()  +
+  facet_wrap(~.metric, scales = "free_y") +
+  guides(colour = guide_legend(title = 'RBF_Sigma')) +
+  labs(title = "RBF SVM Performance",
+       subtitle = "Base Recipe",
+       x = "Cost", y = "Performance")
+```
+
+```{r}
+rbfsvm_enhanced_tune %>%
+  show_best(metric = "roc_auc") %>%
+  kable(digits = 3)
+```
+
+```{r}
+rbfsvm_enhanced_tune %>%
+  select_best(metric = "roc_auc")%>%
+  kable(digits = 3) 
+```
+
+```{r}
+rbfsvm_enhanced_metric%>%
+  subset(.config == 'Preprocessor1_Model05')%>%
+  kable(digits = 3)
+```
+
+# Findings
+
+Based on optimization metrics 0.566 (Base Recipe) vs 0.565 (Enhanced Recipe), the base recipe shows a better performance. For illustrative purpose feature importance of both recipe is shown below. Insights will be discussed more in Summary Report
+
+# Feature Importance
+
+```{r}
+best_base_model<-    
+    svm_rbf(cost = 2.652,
+            rbf_sigma = 0.004) %>%
+    set_mode(('classification')) %>%
+    set_engine('kernlab',importance = "impurity")
+  
+best_base_wf<-
+  rbfsvm_base_wf%>%
+  update_model(best_base_model)
+
+best_base_fit<-
+  best_base_wf%>%
+  last_fit(data_split)
+
+prepped_base_recipe <- prep(rbfsvm_base_recipe)
+baked_base_data <- bake(prepped_base_recipe, new_data = data_train)
+
+extracted_base_fit <- extract_fit_parsnip(best_base_fit)
+
+vip(
+      object = extracted_base_fit,
+      method = "permute",
+      target = "Up_Down",
+      reference_class = "Up",
+      train = baked_base_data,
+      metric = "auc",
+      pred_wrapper = kernlab::predict,
+      nsim = 5)
+```
+
+```{r}
+best_enhanced_model<-    
+    svm_rbf(cost = 0.974,
+          rbf_sigma = 0) %>%
+    set_mode(('classification')) %>%
+    set_engine('kernlab',importance = "impurity")
+  
+best_enhanced_wf<-
+  rbfsvm_enhanced_wf%>%
+  update_model(best_enhanced_model)
+
+best_enhanced_fit<-
+  best_enhanced_wf%>%
+  last_fit(data_split)
+
+prepped_enhanced_recipe <- prep(rbfsvm_enhanced_recipe)
+baked_enhanced_data <- bake(prepped_enhanced_recipe, new_data = data_train)
+
+extracted_enhanced_fit <- extract_fit_parsnip(best_enhanced_fit)
+
+vip(
+      object = extracted_enhanced_fit,
+      method = "permute",
+      target = "Up_Down",
+      reference_class = "Up",
+      train = baked_enhanced_data,
+      metric = "auc",
+      pred_wrapper = kernlab::predict,
+      nsim = 5)
+```
+
+# Confusion Matrix
+
+Both recipes' matrix are shown but only enhanced recipe is of interest as that is the best model under RBF SVM, more will be discussed in Summary Report
+
+```{r}
+best_rbfsvm_base_model<-select_best(rbfsvm_base_tune)
+rbfsvm_base_tune%>%conf_mat_resampled(parameters = best_rbfsvm_base_model)
+```
+
+```{r}
+best_rbfsvm_enhanced_model<-select_best(rbfsvm_enhanced_tune)
+rbfsvm_enhanced_tune%>%conf_mat_resampled(parameters = best_rbfsvm_enhanced_model)
+```
+
+# Saving Results
+
+Base recipe was the strongest performing model based on the optimization metric (ROC_AUC) so the details relating to it were saved.
+
+```{r}
+save(rbfsvm_base_metric, best_base_wf, best_base_model,
+     file = 'rbfsvm_base_objects.Rda')
+```

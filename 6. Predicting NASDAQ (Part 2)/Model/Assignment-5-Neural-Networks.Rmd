@@ -1,0 +1,290 @@
+---
+title: "Assignment-5-Neural-Networks"
+author: "Johnson_Lee"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 1
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(forcats)
+library(knitr)
+library(yardstick)
+library(tidyverse)
+library(tidymodels)
+library(glmnet)
+library(vip)
+library(nnet)
+```
+
+# Importing Data
+```{r}
+data<-read.csv('nasdaq_lagged_2015_2019.csv')
+```
+
+# Setup for Metrics
+```{r}
+metric <- metric_set(roc_auc, accuracy, precision, recall)
+```
+
+# Data Split
+```{r}
+set.seed(2673)
+data_split<-initial_split(data, prop = 0.75,strata=Up_Down)
+data_split
+data_train<-training(data_split)
+data_test<-testing(data_split)
+```
+
+>Also, decide whether year should be a predictor (and why)
+
+Although year is not the strongest predictor for the direction of the market but the market is known to increase over time based on theory finance so it was included in the analysis.
+
+# CV Folds
+```{r}
+set.seed(548)
+data_folds <- data_train %>% 
+  vfold_cv(v=10, strata=Up_Down, repeats=3)
+```
+
+# Base Recipe
+
+Used all recommended pre-processing method suggested
+
+```{r}
+neuralnetworks_base_recipe<-
+  recipe(Up_Down~ ., data = data_train)%>%
+  step_zv(all_numeric_predictors(), -all_outcomes()) %>%
+  step_normalize(all_numeric_predictors(), -all_outcomes()) %>%
+  step_YeoJohnson(all_numeric_predictors(), -all_outcomes())%>%
+  step_corr(all_numeric_predictors(), -all_outcomes())
+```
+
+Included basis expansion to allow for fitting non-linear models
+
+```{r}
+neuralnetworks_enhanced_recipe <- 
+ neuralnetworks_base_recipe%>%
+  step_bs(-Up_Down)
+```
+
+# Create Model
+
+Hyperparameters of hidden units and penalty were used. Epoch was excluded to simplify process and improve computational time.
+
+```{r}
+neuralnetworks_model <-
+     mlp(hidden_units = tune(),
+        penalty = tune()) %>%
+    set_mode(('classification')) %>%
+    set_engine('nnet',importance = "impurity")
+```
+
+# Hyperparameters
+# Random Forest Grid
+
+Creating Latin HyperCube grid to tune the model later
+
+```{r}
+set.seed(123)
+neuralnetworks_grid <- grid_latin_hypercube(
+  hidden_units(),
+  penalty(),
+  size= 25
+  )
+```
+
+# Building Workflow
+
+```{r}
+neuralnetworks_base_wf <- 
+  workflow() %>%
+  add_recipe(neuralnetworks_base_recipe) %>%
+  add_model(neuralnetworks_model)
+neuralnetworks_base_parameters<-extract_parameter_set_dials(neuralnetworks_base_wf)
+
+neuralnetworks_enhanced_wf <- 
+  workflow() %>%
+  add_recipe(neuralnetworks_enhanced_recipe) %>%
+  add_model(neuralnetworks_model)
+neuralnetworks_enhanced_parameters<-extract_parameter_set_dials(neuralnetworks_enhanced_wf)
+```
+
+# Tuning Parameters with Grid
+
+```{r, warning=FALSE,message=FALSE}
+neuralnetworks_base_tune<-
+  neuralnetworks_base_wf%>%
+  tune_grid(
+    data_folds,
+    grid=neuralnetworks_grid,
+    metrics= metric,
+    control = control_resamples(save_pred = TRUE))
+
+neuralnetworks_enhanced_tune<-
+  neuralnetworks_enhanced_wf%>%
+  tune_grid(
+    data_folds,
+    grid=neuralnetworks_grid,
+    metrics= metric,
+    control = control_resamples(save_pred = TRUE))
+
+```
+
+# Collecting Metrics (Created for Exporting)
+
+```{r}
+neuralnetworks_base_metric<-
+  neuralnetworks_base_tune%>%
+  collect_metrics()
+
+neuralnetworks_enhanced_metric<-
+  neuralnetworks_enhanced_tune%>%
+  collect_metrics()
+```
+
+# Visualizing Performance
+
+Based on ROC_AUC it seems that lower hidden unit and lower penalty generates the best model
+
+```{r}
+neuralnetworks_base_tune%>%
+collect_metrics()%>%
+ggplot(aes(x = hidden_units, y = mean,color=penalty)) +
+  geom_point() +
+  facet_wrap(~.metric, scales = "free_y") +
+  guides(colour = guide_legend(title = 'Penalty')) +
+  labs(title = "Neaural Networks Performance",
+       subtitle = "Base Recipe",
+       x = "Hidden Units", y = "Performance")
+```
+
+Using `show_best` to view model performance based on optimization metric
+
+```{r}
+neuralnetworks_base_tune %>%
+  show_best(metric = "roc_auc") %>%
+  kable(digits = 3)
+```
+
+Using `select_best` to isolate the best model
+
+```{r}
+neuralnetworks_base_tune %>%
+  select_best(metric = "roc_auc")%>%
+  kable(digits = 3) 
+```
+
+Pulling all metrics for the best model
+
+```{r}
+neuralnetworks_base_metric%>%
+  subset(.config == 'Preprocessor1_Model25')%>%
+  kable(digits = 3)
+```
+
+Same process as mentioned above for base recipe was applied to the Enhanced Recipe
+
+```{r}
+neuralnetworks_enhanced_tune%>%
+collect_metrics()%>%
+ggplot(aes(x = hidden_units, y = mean,color=penalty)) +
+  geom_point() +
+  facet_wrap(~.metric, scales = "free_y") +
+  guides(colour = guide_legend(title = 'Penalty')) +
+  labs(title = "Neaural Networks Performance",
+       subtitle = "Enhanced Recipe",
+       x = "Hidden Units", y = "Performance")
+```
+
+```{r}
+neuralnetworks_enhanced_tune %>%
+  show_best(metric = "roc_auc") %>%
+  kable(digits = 3)
+```
+
+```{r}
+neuralnetworks_enhanced_tune %>%
+  select_best(metric = "roc_auc")%>%
+  kable(digits = 3) 
+```
+
+```{r}
+neuralnetworks_enhanced_metric%>%
+  subset(.config == 'Preprocessor1_Model09')%>%
+  kable(digits = 3)
+```
+
+# Findings
+
+Based on optimization metrics 0.557 (Base Recipe) vs 0.579 (Enhanced Recipe), the enhanced recipe shows a better performance. For illustrative purpose feature importance of both recipe is shown below. Insights will be discussed more in Summary Report
+
+# Feature Importance
+
+```{r}
+best_base_model<-    
+    mlp(hidden_units = 3,
+            penalty = 0.19) %>%
+    set_mode(('classification')) %>%
+    set_engine('nnet',importance = "impurity")
+  
+best_base_wf<-
+  neuralnetworks_base_wf%>%
+  update_model(best_base_model)
+
+best_base_fit<-
+  best_base_wf%>%
+  last_fit(data_split)
+
+best_base_fit%>%
+  extract_fit_parsnip()%>%
+  vip()
+```
+
+```{r}
+best_enhanced_model<-    
+    mlp(hidden_units = 9,
+          penalty = 0.101) %>%
+    set_mode(('classification')) %>%
+    set_engine('nnet',importance = "impurity")
+  
+best_enhanced_wf<-
+  neuralnetworks_enhanced_wf%>%
+  update_model(best_enhanced_model)
+
+best_enhanced_fit<-
+  best_enhanced_wf%>%
+  last_fit(data_split)
+
+best_enhanced_fit%>%
+  extract_fit_parsnip()%>%
+  vip()
+```
+
+# Confusion Matrix
+
+Both recipes' matrix are shown but only enhanced recipe is of interest as that is the best model under Neural Networks, more will be discussed in Summary Report
+
+```{r}
+best_neuralnetworks_base_model<-select_best(neuralnetworks_base_tune)
+neuralnetworks_base_tune%>%conf_mat_resampled(parameters = best_neuralnetworks_base_model)
+```
+
+```{r}
+best_neuralnetworks_enhanced_model<-select_best(neuralnetworks_enhanced_tune)
+neuralnetworks_enhanced_tune%>%conf_mat_resampled(parameters = best_neuralnetworks_enhanced_model)
+```
+
+# Saving Results
+
+Enhanced recipe was the strongest performing model based on the optimization metric (ROC_AUC) so the details relating to it were saved.
+
+```{r}
+save(neuralnetworks_enhanced_metric, best_enhanced_wf, best_enhanced_model,
+     file = 'neuralnetworks_enhanced_objects.Rda')
+```

@@ -1,0 +1,72 @@
+---
+title: "Assignment-4-Lab-Notebook"
+author: "Johnson_Lee"
+date: '2022-07-03'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+> Benefits of the two model types in these experiments
+
+The two model used in these experiments are Boosting and Random Forest. They both fall under the tree based method of modelling. Advantage of each of the two model can be seen below.
+
+*Boosting*
+
+1. Ease of Use - Does not require data preprocessing and the model is able to tune with multiple hyperparameters such as trees, learning rate (the one used in analysis) and more to help fit the data
+
+2. Reduces Bias - In comparison to other models such as logistic and linear regression model bias is able to be reduced due to the boosting algorithm ability to improve observation through combining weak results. 
+
+3. Computational Efficiency - Only features that help improve predictive power are used. This reduces dimensionality and makes it more efficient in terms of computation time
+
+*Random Forest*
+
+1. Flexibility - This model is able to be used with classification and regression model which provides flexibility in the future to find the return of the next rather than just determining if the market will be up or down
+
+2. Accuracy - In theory this model will provide more accurate results compared to other tree based methods as it creates many trees and combines the result which reduces overfitting hence improving accuracy
+
+> Insights from the EDA
+
+- From the Pairs plot it can be seen the overall days that the market was up is greater than the day is was down over the last 10 year this could potentially impact our model as the market condition today are not the same as the one used to train the model
+
+- All numerical variables seems to have little to no correlation given they are all close to 0. The variables that have the highest correlation (negative) are volume with the returns from previous 1-5 days but they still present at most -0.08 which is really weak
+
+- Previous day Returns (Lag_1) typically range anywhere from -7% to 6% if the market is up, when down the range is only -5% to 5%. There also seems to be slightly more volume on days the market is down possibly due to investors selling after seeing others sells
+
+# Approach
+
+> Rationale for the preprocessing step in the second recipe
+
+- The second recipe included an additional step of step_bs which looks to conduct basis expansion. This applies a general transformation that allows for non-linear modelling
+
+> Advantage of the optimization metric
+
+- The metrics that were calculated were (roc_auc, accuracy, precision, recall). ROC_AUC was determined to be the optimization metric as it is designed for classification purposes. It shows the performance of the model at identifying if the model is positive or negative.
+
+> Rationale for sequence of grid types (e.g., one grid, two grids)
+
+- Two types of grid were used when tuning the parameters. (Latin Cube and Grid_Regular)
+
+- Latin Cube was used to generate near random parameter that were to be tested in the model. The purpose of using this type of grid was for the randomness
+
+- Grid Regular method was used to see the results on a given range of parameters
+
+
+# Conclusion
+
+> Insights from the results so far
+
+- Based on both models, volume seems to be the most important indicator. This can be rationalize through if the volume is high there are alot of interest in the market and based off of EDA there were more up days overall hence an overfit and might not apply in current market conditions
+
+- Both model are currently not suitable for use and more variables could potentially make the model more accurate. Based on the metrics that are outputted via ROC_AUC it was seen to be around ~0.5 which is less than 0.6 and considered poor. 
+
+- Past returns are not indicative of future prospect so having most variable as returns ranging from 1-5 days creates an usable model
+
+> Key open questions
+
+- What constitutes the NASDAQ at each time frame and did these constitutes have any major influences on the return. Could this be factored into the model?
+
+- Can the model be applied on different indexes/ markets to test if the low performance is caused by the volatility in technology stocks that does not follow normal patterns

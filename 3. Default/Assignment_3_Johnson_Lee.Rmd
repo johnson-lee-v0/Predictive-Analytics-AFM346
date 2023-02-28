@@ -1,0 +1,335 @@
+---
+title: "Assignment_3_AFM346"
+author: "Johnson_Lee"
+date: '2022-06-12'
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    theme: lumen
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(ISLR)
+library(forcats)
+library(GGally)
+library(knitr)
+library(yardstick)
+library(tidyverse)
+library(tidymodels)
+library(glmnet)
+```
+
+## Introduction
+
+Two models will be created and have data fitted to them. This will be used to obtain the best model, each model’s hyperparameters will be tuned (e.g., the number of neighbors) in the process of selecting the best model. Cross-validation (CV) metrics will be used to assess each model. At the end, the test dataset will be used to evaluate the final model that is determined to fit best.
+
+## Preparing the Data
+
+`fct_relevel` was used to focus the data on the event of default.
+
+```{r}
+data('Default')
+card_defaults <- Default %>%
+    mutate(default = fct_relevel(default, 'Yes'))
+```
+
+## EDA
+
+Basic EDA was done with `ggpairs()` and another unique graph was created as well.
+
+```{r message=FALSE}
+card_defaults %>%
+    ggpairs()
+```
+
+### DIY EDA
+
+From the chart below it can be seen that most balances are within 0-2000. The most concentrated area that is related to our concern of a possible default is of people with balances in the range of 500-1250 and income level between 20,000 to 50,000.
+
+```{r}
+library(hexbin)
+ggplot(data = card_defaults) +
+  geom_hex(mapping = aes(x = balance, y = income))
+```
+
+## Setting up Metrics
+
+Metrics that were of interest were `accuracy` , `roc_auc`, `precision` and `recall`.
+
+```{r}
+multi_metric <- metric_set(accuracy, roc_auc, precision, recall)
+```
+
+## Data Split and CV Folds
+
+The dataset was split into training and testing set and for the training data it was then divided into 10 folds and 5 repetitions were applied.
+
+### Data Split
+
+```{r}
+set.seed(987)
+card_defaults_split<-initial_split(card_defaults, prop = 0.70,strata=default)
+card_defaults_split
+card_defaults_train<-training(card_defaults_split)
+card_defaults_test<-testing(card_defaults_split)
+```
+
+### CV Folds
+
+Below the data is folded 10 times and the process is repeated 5 times. Folding is a process of resampling method that divides the training data into a certain amount of groups (in our case 10) and fits 9 of them for the model and 1 for computing the performance. The 5 repetitions indicates the number of time of this process is ran to avoid outliers/ test errors.
+
+```{r}
+set.seed(654)
+card_defaults_folds <- card_defaults_train %>% 
+  vfold_cv(v=10, strata=default, repeats=5)
+```
+
+## KNN
+
+### Create a Recipe
+
+A recipe was created to start off the KNN modeling process. The outcome is the default variable, and all of the other variables are predictors.
+
+```{r}
+card_defaults_recipe <- recipe(default~ . ,data=card_defaults_train)
+```
+
+### Create a Model
+
+```{r}
+knn_model <- 
+  nearest_neighbor(neighbors = tune()) %>%
+  set_mode('classification') %>%
+  set_engine('kknn')
+```
+
+### Create a Workflow
+
+```{r}
+knn_workflow_model <- 
+  workflow() %>% 
+  add_recipe(card_defaults_recipe) %>% 
+  add_model(knn_model)
+extract_parameter_set_dials(knn_workflow_model)
+```
+
+### Tune the Model
+
+```{r message=FALSE}
+knn_parameter<-expand_grid(neighbors=2^seq(1,8,1))
+
+knn_workflow_tune<-
+  knn_workflow_model%>%
+  tune_grid(
+    card_defaults_folds,
+    grid=knn_parameter,
+    metrics= multi_metric,
+    control = control_resamples(save_pred = TRUE))
+```
+
+### Assess the Performance
+
+The defualt metric of `accuracy` was used to assess the model and other metrics can be seen plotted below.
+
+### Show the Best Models
+```{r}
+show_best(knn_workflow_tune)%>%
+  kable(digits =3)
+```
+
+### Plot Performance of the Models
+
+Precision of K=256 is missing.
+
+```{r}
+knn_workflow_tune%>%
+  collect_metrics()%>%
+  ggplot(aes(x= neighbors,y=mean))+
+  geom_point()+
+  geom_line()+
+  facet_wrap(~.metric, scales= 'free_y')+
+  labs(title = 'Default Predictions',
+       x= 'Neighbors (K)')
+```
+
+### Results and Interpretation
+
+### Analysis
+
+**Which model performed best according to the ROC AUC metric?**
+
+Based on the table below it can be seen the best performing model based on ROC AUC was when neighbors had the value of (k=256). It shows a value of 0.941 which is closest to the optimal desired value of 1 meaning it is the closest model to a 100% true positive.
+
+```{r echo=FALSE}
+show_best(knn_workflow_tune,metric = 'roc_auc')%>%
+  kable(digits =3)
+```
+
+**What conclusions can you draw by reviewing the recall and precision metrics for this model?**
+
+### Precision
+
+Through looking at precision the reader is able to see a measure of validity of positive predictions. From the table below it can be seen that the model using neighbors of (k=128) has a score of 0.78. This means out of all positive predictions 78% is accuruate.
+
+```{r echo=FALSE}
+show_best(knn_workflow_tune,metric = 'precision')%>%
+  kable(digits =3)
+```
+
+### Recall
+
+Through looking at recall the reader is able to see a measure of completeness of positive predictions. From the table below it can be seen that the model using neighbors of (k=8) has a score of 0.342. This means out of all positive predictions against the total outcome that are positive 34.2% is accurate.
+
+```{r echo=FALSE}
+show_best(knn_workflow_tune,metric = 'recall')%>%
+  kable(digits =3)
+```
+
+**Is accuracy useful for assessing this model?**
+
+Accuracy is able to provide a picture on how well the prediction is able to match the result which gives a sense of how reliable the model is but it should be used with other metrics. Through looking at accuracy the reader is able to see a measure of all predictions that were correct whether it is positive or negative. From the table below it can be seen that the model using neighbors of (k=32) has a score of 0.973. This means out of all observation 97.3% are accurate.
+
+```{r echo=FALSE}
+show_best(knn_workflow_tune)%>%
+  kable(digits =3)
+```
+
+### Confusion Matrix
+
+**What is a resampled confusion matrix in general?**
+
+A resampled confusion matrix looks to duplicate the process described below of a confusion matrix and take the average results. A confusion matrix shows the predictions against the actual outcome such as if it was TRUE and TRUE then it would be classified as true positive or if it was label as FALSE when it was suppose to be TRUE then it would be False positive and etc. 
+
+**What is the biggest problem with this model?**
+
+The biggest problem that exist within the resampled confusion matrix model is that it requires alot of resampling which takes a long processing time and a large resampling will need to be completed to achieve an results that does not have materially impacting outliers.
+
+```{r message=FALSE}
+best_knn_model<-select_best(knn_workflow_tune)
+
+knn_workflow_tune%>%conf_mat_resampled(parameters = best_knn_model)
+```
+
+## Logisitc Regression
+
+### Create a Recipe
+
+Similar to KNN a recipe was created.
+
+```{r}
+card_defaults_recipe2 <- card_defaults_recipe%>%
+  step_normalize(all_numeric())%>%
+  step_dummy(student)
+```
+
+### Create a Model
+
+```{r}
+log_reg_model <-
+  logistic_reg(penalty = tune(),
+               mixture = 1) %>%
+  set_engine('glmnet')
+```
+
+### Create a Workflow
+
+```{r}
+log_reg_workflow_model <- 
+  workflow() %>% 
+  add_recipe(card_defaults_recipe2) %>% 
+  add_model(log_reg_model)
+extract_parameter_set_dials(log_reg_workflow_model)
+```
+
+### Tune the Model
+
+```{r message=FALSE}
+log_reg_parameter<-expand_grid(penalty=seq(0,0.1,0.025))
+
+log_reg_workflow_tune<-
+  log_reg_workflow_model%>%
+  tune_grid(
+    card_defaults_folds,
+    grid=log_reg_parameter,
+    metrics= multi_metric,
+    control = control_resamples(save_pred = TRUE))
+```
+
+### Assess the Performance
+
+### Show the Best Models
+
+Similar to KNN the default metric of `accuracy` is shown below and in the plot below the other metrics can be seen.
+
+```{r}
+show_best(log_reg_workflow_tune)%>%
+  kable(digits =3)
+```
+
+### Plot Perormance of the Models
+
+3 row of data were removed in precision due to missing value.
+
+```{r}
+log_reg_workflow_tune%>%
+  collect_metrics()%>%
+  ggplot(aes(x= penalty,y=mean))+
+  geom_point()+
+  geom_line()+
+  facet_wrap(~.metric,scales= 'free_y')+
+  labs(title = 'Sales Predictions',
+       x= 'Penalty')
+```
+
+### Results and Interpretation
+
+**Which model has better overall performance - KNN or logistic regression? Why so?**
+
+Depending on which metric was used to assess the performance, the model that has the better overall performance would change. In my opinion accuracy should be used as it is able to indicate whether the predictions made in each category were correct and a good overall measure to see if the data is relevant as a low accuracy would not provide much value since it cannot be confidently used for further analysis. Also looking at the result of the prediction it can be seen through the confusion matrix both were highly similar but the logistic regression one was slightly higher in the yes yes predictions.
+
+```{r message=FALSE}
+best_log_reg_model<-select_best(log_reg_workflow_tune)
+
+log_reg_workflow_tune%>%conf_mat_resampled(parameters = best_log_reg_model)
+```
+
+## Test the Final Model
+
+The logisitc regression model was determined to be a better fit as concluded above. It was used with test data to create the analysis below.
+
+**How do the cross-validation error metrics (with the training set) compare to the final error metrics (with the test set)?**
+
+Below it can be seen on a ROC AUC basis that the prediction yields ~0.95 compared to the table below where it can be seen that the highest value is ~0.948. This indicates that the performance of the test data's prediction fits the model better than training at all interval as the larger the penalty will lead to a fall in ROC AUC as seen in the table below.
+
+```{r}
+fit_log_reg <- log_reg_workflow_model %>%
+  finalize_workflow(best_log_reg_model) %>%
+  fit(card_defaults_train) 
+
+card_defaults_test %>% 
+  bind_cols(predict(fit_log_reg, card_defaults_test, type = 'prob')) %>%
+  roc_auc(truth = default, .pred_Yes)
+```
+
+### Results of Logisitic Regression
+
+```{r}
+show_best(log_reg_workflow_tune,metric = 'roc_auc')%>%
+  kable(digits =3)
+```
+
+### Confusion Matrix for Test Prediction
+
+```{r}
+card_defaults_test %>% 
+  bind_cols(predict(fit_log_reg, card_defaults_test)) %>%
+  conf_mat(truth = default, estimate = .pred_class)
+```
+
+**Considering the business problem of card defaults, which aspects of the final model prediction would you recommend enhancing?**
+
+I would recommend enhancing one of the first step in gathering the variable as knowing just the income, default (yes/no), student (yes/no) and balance does not provide much context on the user of itself which does not allow us to more accurately model out their shopping behavior. With additional information such as the region the card users are from or students' year of study and more. We could also look to isolate for variables that are better predicitors in the recipe process rather than use all variables.

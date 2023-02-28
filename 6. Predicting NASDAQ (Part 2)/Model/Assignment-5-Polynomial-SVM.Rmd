@@ -1,0 +1,348 @@
+---
+title: "Assignment-5-Polynomial-SVM"
+author: "Johnson_Lee"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 1
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(forcats)
+library(knitr)
+library(yardstick)
+library(tidyverse)
+library(tidymodels)
+library(glmnet)
+library(vip)
+library(kernlab)
+```
+
+# Importing Data
+
+```{r}
+data<-read.csv('nasdaq_lagged_2015_2019.csv')
+```
+
+# Setup for Metrics
+
+```{r}
+metric <- metric_set(roc_auc, accuracy, precision, recall)
+```
+
+# Data Split
+
+```{r}
+set.seed(2673)
+data_split<-initial_split(data, prop = 0.75,strata=Up_Down)
+data_split
+data_train<-training(data_split)
+data_test<-testing(data_split)
+```
+
+> Also, decide whether year should be a predictor (and why)
+
+Although year is not the strongest predictor for the direction of the market but the market is known to increase over time based on theory finance so it was included in the analysis.
+
+# CV Folds
+
+```{r}
+set.seed(548)
+data_folds <- data_train %>% 
+  vfold_cv(v=10, strata=Up_Down, repeats=3)
+```
+
+# Base Recipe
+
+Used all recommended pre-processing method suggested
+
+```{r}
+polysvm_base_recipe<-
+  recipe(Up_Down~ ., data = data_train)%>%
+  step_zv(all_numeric_predictors(), -all_outcomes()) %>%
+  step_normalize(all_numeric_predictors(), -all_outcomes()) %>%
+  step_YeoJohnson(all_numeric_predictors(), -all_outcomes())%>%
+  step_corr(all_numeric_predictors(), -all_outcomes())
+```
+
+Included basis expansion to allow for fitting non-linear models
+
+```{r}
+polysvm_enhanced_recipe <- 
+ polysvm_base_recipe%>%
+  step_bs(-Up_Down)
+```
+
+# Create Model
+
+Four Hyperparameters were used. Keeping in mind of the computation resource and urgency of request Bayes method was used in tuning rather than using a grid.
+
+```{r}
+polysvm_model <-
+     svm_poly(cost = tune(),
+             margin = tune(),
+             degree = tune(),
+             scale_factor = tune()) %>%
+    set_mode(('classification')) %>%
+    set_engine('kernlab',importance = "impurity")
+```
+
+# Hyperparameters
+
+# Building Workflow
+
+```{r}
+polysvm_base_wf <- 
+  workflow() %>%
+  add_recipe(polysvm_base_recipe) %>%
+  add_model(polysvm_model)
+polysvm_base_parameters<-extract_parameter_set_dials(polysvm_base_wf)
+
+polysvm_enhanced_wf <- 
+  workflow() %>%
+  add_recipe(polysvm_enhanced_recipe) %>%
+  add_model(polysvm_model)
+polysvm_enhanced_parameters<-extract_parameter_set_dials(polysvm_enhanced_wf)
+```
+
+# Tuning Parameters
+
+```{r, warning=FALSE,message=FALSE}
+polysvm_base_tune<-
+  polysvm_base_wf%>%
+  tune_bayes(
+    data_folds,
+    param_info=polysvm_base_parameters,
+    initial = 10,
+    iter=35,
+    metrics= metric,
+    control = control_bayes(save_pred = TRUE,no_improve=10,seed=1234))
+
+polysvm_enhanced_tune<-
+  polysvm_enhanced_wf%>%
+  tune_bayes(
+    data_folds,
+    param_info=polysvm_enhanced_parameters,
+    initial = 10,
+    iter=35,
+    metrics= metric,
+    control = control_bayes(save_pred = TRUE,no_improve=10,seed=1234))
+
+```
+
+# Collecting Metrics (Created for Exporting)
+
+```{r}
+polysvm_base_metric<-
+  polysvm_base_tune%>%
+  collect_metrics()
+
+polysvm_enhanced_metric<-
+  polysvm_enhanced_tune%>%
+  collect_metrics()
+```
+
+# Visualizing Performance
+
+```{r}
+polysvm_base_tune%>%
+collect_metrics()%>%
+ggplot(aes(x = .iter, y = mean)) +
+  geom_point() +
+  geom_line() +
+  facet_wrap(~.metric, scales = "free_y") +
+  guides(colour = guide_legend(title = 'Learn rate')) +
+  labs(title = "Polynomial SVM Performance",
+       subtitle = "Base Recipe",
+       x = "Iterations", y = "Performance")
+```
+
+```{r}
+pivot_base <- polysvm_base_metric %>%
+    pivot_longer(cols = polysvm_base_parameters[['name']],
+                 names_to = 'parameter',
+                 values_to = 'value')
+
+pivot_base %>%
+    ggplot(aes(x = .iter, y = value)) +
+    geom_point() +
+    geom_line() +
+    facet_wrap(~ parameter, scales = "free_y") +
+    labs(title = 'Polynomial SVM',
+         subtitle = "Base Recipe",
+         x = 'Iteration',
+         y = 'Parameter Value')
+```
+
+Using `show_best` to view model performance based on optimization metric
+
+```{r}
+polysvm_base_tune %>%
+  show_best(metric = "roc_auc") %>%
+  kable(digits = 3)
+```
+
+Using `select_best` to isolate the best model
+
+```{r}
+polysvm_base_tune %>%
+  select_best(metric = "roc_auc")%>%
+  kable(digits = 3) 
+```
+
+Pulling all metrics for the best model
+
+```{r}
+polysvm_base_metric%>%
+  subset(.config == 'Iter12')%>%
+  kable(digits = 3)
+```
+
+Same process as mentioned above for base recipe was applied to the Enhanced Recipe
+
+```{r}
+polysvm_enhanced_tune%>%
+collect_metrics()%>%
+ggplot(aes(x = .iter, y = mean)) +
+  geom_point() +
+  geom_line() +
+  facet_wrap(~.metric, scales = "free_y") +
+  guides(colour = guide_legend(title = 'Learn rate')) +
+  labs(title = "Polynomial SVM Performance",
+       subtitle = "Enhanced Recipe",
+       x = "Iterations", y = "Performance")
+```
+
+```{r}
+pivot_enhanced <- polysvm_enhanced_metric %>%
+    pivot_longer(cols = polysvm_base_parameters[['name']],
+                 names_to = 'parameter',
+                 values_to = 'value')
+
+pivot_base %>%
+    ggplot(aes(x = .iter, y = value)) +
+    geom_point() +
+    geom_line() +
+    facet_wrap(~ parameter, scales = "free_y") +
+    labs(title = 'Polynomial SVM',
+         subtitle = "Enhanced Recipe",
+         x = 'Iteration',
+         y = 'Parameter Value')
+```
+
+```{r}
+polysvm_enhanced_tune %>%
+  show_best(metric = "roc_auc") %>%
+  kable(digits = 3)
+```
+
+```{r}
+polysvm_enhanced_tune %>%
+  select_best(metric = "roc_auc")%>%
+  kable(digits = 3) 
+```
+
+```{r}
+polysvm_enhanced_metric%>%
+  subset(.config == 'Preprocessor1_Model09')%>%
+  kable(digits = 3)
+```
+
+# Findings
+
+Based on optimization metrics 0.586 (Base Recipe) vs 0.566 (Enhanced Recipe), the base recipe shows a better performance. For illustrative purpose feature importance of both recipe is shown below. Insights will be discussed more in Summary Report
+
+# Feature Importance
+
+```{r}
+best_base_model<-    
+    svm_poly(cost = 14.065,
+          degree = 	2,
+          scale_factor= 0.047,
+          margin=0.139) %>%
+    set_mode(('classification')) %>%
+    set_engine('kernlab',importance = "impurity")
+  
+best_base_wf<-
+  polysvm_base_wf%>%
+  update_model(best_base_model)
+
+best_base_fit<-
+  best_base_wf%>%
+  last_fit(data_split)
+
+prepped_base_recipe <- prep(polysvm_base_recipe)
+baked_base_data <- bake(prepped_base_recipe, new_data = data_train)
+
+extracted_base_fit <- extract_fit_parsnip(best_base_fit)
+
+vip(
+      object = extracted_base_fit,
+      method = "permute",
+      target = "Up_Down",
+      reference_class = "Up",
+      train = baked_base_data,
+      metric = "auc",
+      pred_wrapper = kernlab::predict,
+      nsim = 5)
+```
+
+```{r include=FALSE}
+best_enhanced_model<-    
+    svm_poly(cost = 0.007,
+          degree = 1,
+          scale_factor= 0.082,
+          margin=0.197) %>%
+    set_mode(('classification')) %>%
+    set_engine('kernlab',importance = "impurity")
+  
+best_enhanced_wf<-
+  polysvm_enhanced_wf%>%
+  update_model(best_enhanced_model)
+
+best_enhanced_fit<-
+  best_enhanced_wf%>%
+  last_fit(data_split)
+
+prepped_enhanced_recipe <- prep(polysvm_enhanced_recipe)
+baked_enhanced_data <- bake(prepped_enhanced_recipe, new_data = data_train)
+
+extracted_enhanced_fit <- extract_fit_parsnip(best_enhanced_fit)
+
+vip(
+      object = extracted_enhanced_fit,
+      method = "permute",
+      target = "Up_Down",
+      reference_class = "Up",
+      train = baked_enhanced_data,
+      metric = "auc",
+      pred_wrapper = kernlab::predict,
+      nsim = 5)
+```
+
+# Confusion Matrix
+
+Both recipes' matrix are shown but only base recipe is of interest as that is the best model under Polynomial SVM, more will be discussed in Summary Report
+
+```{r}
+best_polysvm_base_model<-select_best(polysvm_base_tune)
+polysvm_base_tune%>%conf_mat_resampled(parameters = best_polysvm_base_model)
+```
+
+```{r}
+best_polysvm_enhanced_model<-select_best(polysvm_enhanced_tune)
+polysvm_enhanced_tune%>%conf_mat_resampled(parameters = best_polysvm_enhanced_model)
+```
+
+# Saving Results
+
+Base recipe was the strongest performing model based on the optimization metric (ROC_AUC) so the details relating to it were saved.
+
+```{r}
+save(polysvm_base_metric, best_base_wf, best_base_model,
+     file = 'polysvm_base_objects.Rda')
+```

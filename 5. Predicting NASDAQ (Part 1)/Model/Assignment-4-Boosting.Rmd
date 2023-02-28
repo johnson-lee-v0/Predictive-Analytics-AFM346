@@ -1,0 +1,221 @@
+---
+title: "Assignment-4-Boosting"
+author: "Johnson_Lee"
+date: '2022-07-03'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(forcats)
+library(knitr)
+library(yardstick)
+library(tidyverse)
+library(tidymodels)
+library(glmnet)
+library(xgboost)
+library(vip)
+```
+
+# Importing Data
+```{r}
+data<-read.csv('nasdaq_lagged.csv')
+```
+
+# Setup for Metrics
+```{r}
+metric <- metric_set(roc_auc, accuracy, precision, recall)
+```
+
+# Data Split
+```{r}
+set.seed(2673)
+data_split<-initial_split(data, prop = 0.75,strata=Up_Down)
+data_split
+data_train<-training(data_split)
+data_test<-testing(data_split)
+```
+
+>Also, decide whether year should be a predictor (and why)
+
+Although year is not the strongest predictor for the direction of the market but the market is known to increase over time based on theory finance so it was included in the analysis.
+
+# CV Folds
+```{r}
+set.seed(548)
+data_folds <- data_train %>% 
+  vfold_cv(v=10, strata=Up_Down, repeats=3)
+```
+
+# Base Recipe
+```{r}
+boost_base_recipe<-
+  recipe(Up_Down~ ., data = data_train)%>%
+  step_zv(all_numeric(), -all_outcomes()) %>%
+  step_corr(all_numeric(), -all_outcomes())
+```
+
+```{r}
+boost_enhanced_recipe <- 
+ boost_base_recipe%>%
+  step_bs(-Up_Down)
+```
+
+# Create Model
+```{r}
+boost_model <-
+    boost_tree(trees = tune(),
+                learn_rate = tune()) %>%
+    set_mode(('classification')) %>%
+    set_engine('xgboost')
+```
+
+# Hyperparameters
+# Boost Grid
+```{r}
+set.seed(123)
+boost_grid <- grid_latin_hypercube(
+  trees(range = c(10, 100)),
+  learn_rate(range = c(-2, -0.2)),
+  size=25
+  )
+```
+
+```{r}
+boost_base_wf <- 
+  workflow() %>%
+  add_recipe(boost_base_recipe) %>%
+  add_model(boost_model)
+extract_parameter_set_dials(boost_base_wf)
+
+boost_enhanced_wf <- 
+  workflow() %>%
+  add_recipe(boost_enhanced_recipe) %>%
+  add_model(boost_model)
+extract_parameter_set_dials(boost_enhanced_wf)
+```
+
+```{r, warning=FALSE,message=FALSE}
+boost_base_tune<-
+  boost_base_wf%>%
+  tune_grid(
+    data_folds,
+    grid=boost_grid,
+    metrics= metric,
+    control = control_resamples(save_pred = TRUE))
+
+boost_enhanced_tune<-
+  boost_enhanced_wf%>%
+  tune_grid(
+    data_folds,
+    grid=boost_grid,
+    metrics= metric,
+    control = control_resamples(save_pred = TRUE))
+```
+
+```{r}
+boost_base_metric<-
+  boost_base_tune%>%
+  collect_metrics()
+
+boost_enhanced_metric<-
+  boost_enhanced_tune%>%
+  collect_metrics()
+```
+
+```{r}
+boost_base_tune%>%
+collect_metrics()%>%
+ggplot(aes(x = trees, y = mean,
+             colour = as_factor(round(learn_rate, 3)))) +
+  geom_point() +
+  geom_line(aes(group = learn_rate)) +
+  facet_wrap(~.metric, scales = "free_y") +
+  guides(colour = guide_legend(title = 'Learn rate')) +
+  labs(title = "Boosted Trees Performance",
+       subtitle = "Base Recipe",
+       x = "Trees", y = "Performance")
+```
+
+```{r}
+boost_base_tune %>%
+  show_best(metric = "roc_auc") %>%
+  kable(digits = 3)
+```
+
+```{r}
+boost_enhanced_tune%>%
+collect_metrics()%>%
+ggplot(aes(x = trees, y = mean,
+             colour = as_factor(round(learn_rate, 3)))) +
+  geom_point() +
+  geom_line(aes(group = learn_rate)) +
+  facet_wrap(~.metric, scales = "free_y") +
+  guides(colour = guide_legend(title = 'Learn rate')) +
+  labs(title = "Boosted Trees Performance",
+       subtitle = "Enhanced Recipe",
+       x = "Trees", y = "Performance")
+```
+
+```{r}
+boost_enhanced_tune %>%
+  show_best(metric = "roc_auc") %>%
+  kable(digits = 3)
+```
+
+
+```{r}
+best_base_model<-    
+    boost_tree(trees = 40,
+          learn_rate = 0.016) %>%
+    set_mode(('classification')) %>%
+    set_engine('xgboost')
+  
+best_base_wf<-
+  boost_base_wf%>%
+  update_model(best_base_model)
+
+best_base_fit<-
+  best_base_wf%>%
+  last_fit(data_split)
+
+best_base_fit%>%
+extract_fit_parsnip() %>% 
+  vip(num_features = 10)
+```
+
+```{r}
+best_enhanced_model<-    
+    boost_tree(trees = 46,
+          learn_rate = 0.366) %>%
+    set_mode(('classification')) %>%
+    set_engine('xgboost')
+  
+best_enhanced_wf<-
+  boost_enhanced_wf%>%
+  update_model(best_enhanced_model)
+
+best_enhanced_fit<-
+  best_enhanced_wf%>%
+  last_fit(data_split)
+
+best_enhanced_fit%>%
+extract_fit_parsnip() %>% 
+  vip(num_features = 20)
+```
+
+```{r}
+best_boost_base_model<-select_best(boost_base_tune)
+boost_base_tune%>%conf_mat_resampled(parameters = best_boost_base_model)
+```
+
+```{r}
+best_boost_enhanced_model<-select_best(boost_enhanced_tune)
+boost_enhanced_tune%>%conf_mat_resampled(parameters = best_boost_enhanced_model)
+```
+
+```{r}
+save(boost_base_metric, best_base_wf, best_base_model,
+     file = 'boost_base_objects.Rda')
+```

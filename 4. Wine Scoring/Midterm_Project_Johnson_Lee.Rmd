@@ -1,0 +1,471 @@
+---
+title: "Midterm Project"
+author: "Johnson_Lee"
+date: '2022-06-19'
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 4
+    theme: lumen
+---
+
+### Model Tuning Setup
+
+```{r setup}
+knitr::opts_chunk$set(include=TRUE, warning=TRUE, message=FALSE)
+library(tidyverse)
+library(tidymodels)
+library(knitr)
+library(GGally)
+library(yardstick)
+```
+
+## Introduction (10 points)
+
+#### Problem
+
+Wine price is highly tied to the rating associated with it. This analysis aims to use measurable attributes of wine data from the UCI Machine Learning Repository (University of California at Irvine) to predict wine rating based. 
+
+#### Dataset
+
+```{r}
+data<-read_delim('winequality-white.csv',';')
+```
+
+The dataset contains 11 quantitative predictors and 1 outcome. The predictors are (Fixed acidity, Volatile acidity, Citric acid,Residual sugar, Chlorides, Free sulfur dioxide, Density, pH, Sulfates, Alcohol)
+The outcome is a quality rating between 0 - 10. There are a total of **4898** observations. 
+
+#### Preview of Conclusion
+
+The KNN model and linear regression model were used in attempt to get the best model that could predict the wine ratings. The KNN model with basis expansion at neighbors (k = 20) ended up being the best performing model as the performance metric selected (RMSE) displayed the lowest out of all model. (0.7032)
+
+#### Recommendations
+
+Despite a low RMSE when comparing the predictions to actual results the model was not consisent as actual ratings between 3-5 was over optimistic while 7-9 was over pessimistic. To create a better model the recipe used could be altered or change the models from regression to classification to test for a true or false statement.
+
+## EDA (20 points)
+
+#### Summary Statistics
+
+```{r}
+stat <- data %>%
+  rownames_to_column() %>% 
+  pivot_longer(-rowname,names_to = 'property') %>%
+  group_by(property)%>%
+  summarise(min = min(value), 
+            Q1 = quantile(value, 0.25),
+            Median = median(value),
+            Average = mean(value),
+            Q3 = quantile(value, 0.75),
+            Max = max(value),
+            SD = sd(value),
+            IQR = IQR(value))
+
+stat%>%kable(digits =2)
+  
+```
+
+#### Pairs Plot
+```{r fig.width=12, fig.height=8}
+ggpairs(data,
+        lower = list(continuous = wrap("smooth_loess", color = 'lightpink')),
+        upper = list(continuous = wrap("cor", size = 4))) +
+    labs(title = "Pairs Plot for White Wine Data") +
+    theme_minimal()
+```
+
+#### Discuss EDA
+
+**Please comment on any important relationships that you see in the summary table or the pairs plot above. Be sure to consider both numeric and visual outputs. With this data, what challenges and opportunities for predictive modeling do you find in the EDA? (This project will address some of those challenges/opportunities.)**
+
+From the Paris Plot the distribution of the 10 variables it can be seen that in general the variables are right skewed, this was confirmed through checking the table and for most variable the mean was greater than the median. 
+
+Most of the variables do not correlate well to the quality which raises the challenge of whether the predictors are good variables to use for predicting ratings. A similar observation can be made when looking at the correlation between variables except for density~residual sugar (0.839), total sulfur dioxide~free sulfur dioxide (0.616) and density~total sulfur dioxide (0.530)
+
+### Preparing the Modeling
+
+#### Performance Metrics
+
+```{r}
+metric <- metric_set(mae,rmse,rsq)
+```
+
+**Among these metrics, please speculate about which one you expect to offer the most useful results, and why so.**
+
+Out of the three metrics (MAE, RMSE and RSQ), I believe RMSE should be used. RSQ looks at how well the independent variables explains the response variable which is not the purpose of this analysis. The analysis is interested in using see the performance of predictions rather than explaining it. RMSE is able to penalize large prediction errors which provides more accurate models as MAE penalizes each prediction the same.
+
+## Data splitting and cross-validation folds (10 points)
+
+The data is split 70-30 to training and testing set.
+
+```{r}
+set.seed(123)
+data_split<-initial_split(data, prop = 0.70,strata=quality)
+data_split
+data_train<-training(data_split)
+data_test<-testing(data_split)
+```
+
+```{r}
+set.seed(456)
+data_folds <- data_train %>% 
+  vfold_cv(v=5, strata=quality, repeats=5)
+```
+
+## Models, recipes, and workflows (20 points)
+
+### Feature Engineering
+
+#### Discussion
+
+**Please define the concept of feature engineering in general.**
+
+Feature engineering is the process of taking raw data and using them to create features that can be used in creating a predictive model.
+
+**Explain two transformations - standardization and basis expansion. Documentation is available in the course book Kuhn and Johnson, Feature Engineering and Selection, Sections 6.1 (“1:1 Transformations”) and 6.2 (“1:Many Transformations”).**
+
+There are mainly two types of transformation. (Standardization and Basis Expansion)
+
+Standardization - This method looks to scale values in order to make them comparable/ similar. It is done through creating a common mean value and ensuring a standard deviation of one  in the training set.
+
+Basis Expansion - This method is highly associated with functions. The most common type are cubic/polynomials. It looks to place what are known as knot (boundaries of interest usually determined through percentiles). It is then observed how the function acts around the knots to see if the predictors are relevant.
+
+#### Creating Recipes
+
+```{r}
+wines_simple_recipe<-recipe(quality~ . ,data=data_train)
+
+wines_norm_recipe<-wines_simple_recipe%>%
+  step_normalize(all_predictors())
+
+wines_basis_recipe<-wines_norm_recipe%>%
+  step_bs(all_predictors())
+```
+
+**Should you standardize the response variable? Why or why not? If ‘yes’, please explain how you would potentially perform this action in your code.**
+
+No, the response variable should not be standardize as the analysis aims to predict the response variable and by standardizing the true value of the response variable is removed and does not provide the model with the most accurate information it needs when comparing the predictions generated.
+
+### KNN
+
+**Briefly introduce KNN models in general - the concept, whether they are parametric or not, and their strengths and weaknesses.**
+
+KNN models is a non parametric algorithm that looks to compare data points with their surrounding and return a value of how similar. The user is able to input the neighbor(s) that they want to use to compare the similarity. The strength of this type of model lies within its simplicity and no learning time being required as no model are created but the tradeoff is the memory intensity that is involved as the more neighbors being compared the longer it will take and since the neighbors are so point outlier could skew results
+
+#### Creating Model
+
+```{r}
+knn_model <- 
+  nearest_neighbor(neighbors = tune()) %>%
+  set_mode('regression') %>%
+  set_engine('kknn')
+```
+
+### Creating Workflow
+
+```{r}
+simple_workflow_knn <- 
+  workflow() %>% 
+  add_recipe(wines_simple_recipe) %>% 
+  add_model(knn_model)
+extract_parameter_set_dials(simple_workflow_knn)
+
+norm_workflow_knn <- 
+  workflow() %>% 
+  add_recipe(wines_norm_recipe) %>% 
+  add_model(knn_model)
+extract_parameter_set_dials(norm_workflow_knn)
+
+basis_workflow_knn <- 
+  workflow() %>% 
+  add_recipe(wines_basis_recipe) %>% 
+  add_model(knn_model)
+extract_parameter_set_dials(basis_workflow_knn)
+```
+
+```{r}
+## OPTIONAL, MIGHT REMOVE LATER
+library(doParallel)
+
+number_of_cores <- parallel::detectCores(logical = FALSE)
+cluster <- makePSOCKcluster(number_of_cores)
+registerDoParallel(cluster)
+```
+
+#### Tuning the Model
+
+```{r}
+knn_grid<-expand_grid(neighbors=seq(5, 250, 5))
+
+simple_workflow_knn_tune<-
+  simple_workflow_knn%>%
+  tune_grid(
+    data_folds,
+    grid=knn_grid,
+    metrics= metric,
+    control = control_resamples(save_pred = TRUE))
+
+norm_workflow_knn_tune<-
+  norm_workflow_knn%>%
+  tune_grid(
+    data_folds,
+    grid=knn_grid,
+    metrics= metric,
+    control = control_resamples(save_pred = TRUE))
+
+basis_workflow_knn_tune<-
+  basis_workflow_knn%>%
+  tune_grid(
+    data_folds,
+    grid=knn_grid,
+    metrics= metric,
+    control = control_resamples(save_pred = TRUE))
+```
+
+```{r}
+stopCluster(cluster)
+```
+
+#### Collecting Performance Metric
+
+```{r}
+simple_knn_result = simple_workflow_knn_tune%>%collect_metrics()%>%mutate(recipe='simple')
+
+norm_knn_result = norm_workflow_knn_tune%>%collect_metrics()%>%mutate(recipe='norm')
+
+basis_knn_result = basis_workflow_knn_tune%>%collect_metrics()%>%mutate(recipe='basis')
+
+result_knn<-bind_rows(simple_knn_result,norm_knn_result,basis_knn_result)
+```
+
+#### Plotting the Performance Metrics
+
+The `norm` recipe is highly overlapped with the `simple` recipe hence there seems to only be 2 lines in the graph below.
+
+```{r}
+result_knn%>%
+ggplot(aes(x= neighbors,y=mean,color= recipe))+
+  geom_line()+
+  facet_wrap(~.metric, scales= 'free_y',nrow=3)+
+  labs(title = 'KNN Performance',
+       x= 'Neighbors (K)')
+```
+
+#### Showing the Best KNN Model
+
+```{r}
+simple_knn_result_best<-show_best(simple_workflow_knn_tune,metric='rmse')%>%mutate(recipe='simple')
+norm_knn_result_best<-show_best(norm_workflow_knn_tune,metric='rmse')%>%mutate(recipe='norm')
+basis_knn_result_best<-show_best(basis_workflow_knn_tune,metric='rmse')%>%mutate(recipe='basis')
+
+result_knn_best<-bind_rows(simple_knn_result_best,norm_knn_result_best,basis_knn_result_best)
+result_knn_best%>%kable(digits=4)
+```
+
+### Linear Regression
+
+#### Creating Model
+
+```{r}
+linear_model <-
+  linear_reg(penalty = tune(),
+               mixture = tune()) %>%
+  set_engine('glmnet')
+```
+
+### Creating Workflow
+
+```{r}
+simple_workflow_linear <- 
+  workflow() %>% 
+  add_recipe(wines_simple_recipe) %>% 
+  add_model(linear_model)
+extract_parameter_set_dials(simple_workflow_linear)
+
+norm_workflow_linear <- 
+  workflow() %>% 
+  add_recipe(wines_norm_recipe) %>% 
+  add_model(linear_model)
+extract_parameter_set_dials(norm_workflow_linear)
+
+basis_workflow_linear <- 
+  workflow() %>% 
+  add_recipe(wines_basis_recipe) %>% 
+  add_model(linear_model)
+extract_parameter_set_dials(basis_workflow_linear)
+```
+```{r}
+## OPTIONAL, MIGHT REMOVE LATER
+library(doParallel)
+
+number_of_cores <- parallel::detectCores(logical = FALSE)
+cluster <- makePSOCKcluster(number_of_cores)
+registerDoParallel(cluster)
+```
+
+#### Tuning the Model
+
+**Briefly define the penalty and mixture hyperparameters Documentation of these hyperparameters is available with the ‘parsnip’ package. You will learn more about these hyperparameters in Week 7. For now, they should work well to give you practice with tuning linear-regression models.**
+
+As mentioned above penalty and mixture are hyperparameters that can be used for tunig a model. 
+
+Penalty tunes the model through the inputted number which represent the number of time regularization should occur,
+
+Mixture on the other hand indicates the type of model that should be applied with (`mixture = 1` being lasso model, `mixture = 0` being ridge regression model and `0 < mixture < 1` being an elastic model)
+
+```{r}
+linear_grid<-expand_grid(penalty=seq(0, 0.3, 0.05),mixture=c(0, 0.15, 0.25, 0.5, 0.75, 0.85, 1))
+
+simple_workflow_linear_tune<-
+  simple_workflow_linear%>%
+  tune_grid(
+    data_folds,
+    grid=linear_grid,
+    metrics= metric,
+    control = control_resamples(save_pred = TRUE))
+
+norm_workflow_linear_tune<-
+  norm_workflow_linear%>%
+  tune_grid(
+    data_folds,
+    grid=linear_grid,
+    metrics= metric,
+    control = control_resamples(save_pred = TRUE))
+
+basis_workflow_linear_tune<-
+  basis_workflow_linear%>%
+  tune_grid(
+    data_folds,
+    grid=linear_grid,
+    metrics= metric,
+    control = control_resamples(save_pred = TRUE))
+```
+
+```{r}
+stopCluster(cluster)
+```
+
+#### Collecting Performance Metric
+
+```{r}
+simple_linear_result = simple_workflow_linear_tune%>%collect_metrics()%>%mutate(recipe='simple')
+
+norm_linear_result = norm_workflow_linear_tune%>%collect_metrics()%>%mutate(recipe='norm')
+
+basis_linear_result = basis_workflow_linear_tune%>%collect_metrics()%>%mutate(recipe='basis')
+
+result_linear<-bind_rows(simple_linear_result,norm_linear_result,basis_linear_result)
+```
+
+#### Plotting the Performance Metrics
+
+```{r}
+result_linear%>%
+ggplot(aes(x= penalty,y=mean,color=as_factor(mixture)))+
+  geom_line()+
+  geom_point()+
+  facet_grid(.metric~recipe,scales='free')+
+  labs(title = 'Linear Regression Performance',
+       x= 'Penalty')+
+  guides(color=guide_legend(title = 'Mixture'))
+```
+
+#### Showing the Best Linear Regression Model
+
+```{r}
+simple_linear_result_best<-show_best(simple_workflow_linear_tune,metric='rmse')%>%mutate(recipe='simple')
+norm_linear_result_best<-show_best(norm_workflow_linear_tune,metric='rmse')%>%mutate(recipe='norm')
+basis_linear_result_best<-show_best(basis_workflow_linear_tune,metric='rmse')%>%mutate(recipe='basis')
+
+result_best<-bind_rows(simple_linear_result_best,norm_linear_result_best,basis_linear_result_best)
+result_best%>%kable(digits=4)
+```
+
+## Tuning results and model assessment (20 points)
+
+### Select the Best Model
+
+**Across all of your experiments with KNN and linear regression in this document, select the best-performing model.**
+
+The best performing model is basis workflow on the KNN model as it has the lowest RMSE (metric previously selected) which shows the strongest performance out of all the model.
+
+### Assessing the Final Model
+
+#### Fitting the Final Model
+```{r}
+best_model <- select_best(basis_workflow_knn_tune, metric = 'rmse')
+
+best_model_fit<-
+  basis_workflow_knn%>%
+  finalize_workflow(parameters = best_model) %>%
+  fit(data_train)
+```
+
+#### Evaluate the Final Model
+
+```{r}
+best_model_predictions <- predict(best_model_fit, 
+                                new_data = data_test)
+
+data_test<- data_test%>%bind_cols(best_model_predictions)
+
+best_model_metrics <-  data_test%>%
+    metrics(truth = quality, estimate = .pred)
+
+best_model_metrics%>%kable(digits = 4)
+```
+
+### Comparing Actual and Predicted Values
+
+```{r}
+collected_predictions <- basis_workflow_knn_tune %>%
+    collect_predictions(parameters = best_model) 
+
+collected_predictions %>%
+    ggplot(aes(x = as_factor(quality), y = .pred)) +
+    geom_boxplot() +
+    labs(title = 'Wines - Actual vs. Predicted Quality',
+         subtitle = 'Predictions from Cross-validation',
+         x = 'Actual',
+         y = 'Predicted')
+```
+
+## Conclusion (20 points)
+
+**Which model would you recommend as having the best performance? Briefly describe your process for assessing each model’s performance, and for selecting a model with the right amount of flexibility (vs. bias).**
+
+As mentioned above the KNN model with basis expansion workflow was the recommended model as it had  the best performance. Performance was evaluated based on RMSE. The lower the RMSE the better as it means the predictions overall variate less compare to the actual figure. When looking at various KNN and Linear regressed models KNN model with basis had the lowest value at 0.7032 computed with neighbors of (k=20). 
+
+**Discuss how your results might change by using a different error metric. Comment on why your chosen metric is more intuitive than the other ones.**
+
+The scenario of using different metrics are analyzed below
+
+MAE - This metric is less accurate as it does not penalize error based on magnitude as all errors are treated the same. What this means for the model's performance is that a predictor that is far away from the actual would be penalized less hence the model if measure with this metric would show better results
+
+RSQ - This metric predicts how accurate predictors can be used to explain movement in response variable. It is generally suitable for linear regression and does not provide much value in our analysis of creating an accurate model in predicting quality. Applying the definition to the model it means that regardless of the value it would not mean much as the model is not a linear regression
+
+**How did the data transformations that you applied affect the performance of the models that you evaluated?**
+
+Two transformation were applied early on `step_normalize` and `step_bs` when creating the  Both transformation help improve the performance of the model. 
+
+The first transformation, standardization made the predictors all scaled relatively so that 1 unit of increase of a certain predictor would be have a similar impact compared to other ones. If scaling was not done then the larger the value of the predictor the more impact it would have.
+
+The second transformation, basis expansion looked to isolate out predictors that have no relevant impact on the response variable in the model.
+
+
+**With the model that you recommended, are the model results consistently good, or are some outcome ranges not as accurate as other ranges? What is your hypothesis about this problem, and what might be a potential solution?**
+
+The model recommended is not consistently good as the graph above displays at interval between 3-5 for the actual result is over optimistic as a predicted quality of 5 is reached 75+% of the time in the three interval. In the interval of 7-9 in the actual result it looks pessimistic as 75%+ of data is less than a predicted quality of 7. The only interval the model has somewhat captured is 6 where the average is around 6. The observation made above could also be proven with outliers (dots on the graph). My hypothesis of the problem mentioned above is due to the basis expansion. Individuals who come up with actual ratings have basis toward certain predictors and it could be possible that basis expansion did not reflect the same basis. To solve this an alternative to consider is changing the recipe to focus on fewer predictors. 
+
+**How could you transform this regression problem into a classification problem instead? What response variable would be appropriate for this use case, i.e., predicting wine ratings for the market?**
+
+To transform this regression problem into a classification problem the following could be consider:
+
+1. Looking at whether the difference between actual vs predicted is within a predetermined range returning a TRUE or FALSE
+2. looking at whether the predicted value is greater than the actual value or vice-versa returning a TRUE or FALSE
+
+**Whether this model is ready for practical use (or requires more investigation).**
+
+This model needs more investigation before it can be applied as the analysis above shows significant problem with its prediction at all interval with the actual result between 3-9 (inclusive) except for 6
+

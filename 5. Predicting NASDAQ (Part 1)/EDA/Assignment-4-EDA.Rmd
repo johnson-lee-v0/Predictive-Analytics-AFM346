@@ -1,0 +1,78 @@
+---
+title: "Assignment-4-EDA"
+author: "Johnson_Lee"
+date: '2022-07-03'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(GGally)
+library(dplyr)
+library(knitr)
+```
+
+# About Data
+The data used for this analysis has 2479 observation with 8 variables containing data from 2010 -2019 of the NASDAQ returns. The variables are (Year, Lag_1, Lag_2, Lag_3, Lag_4, Lag_5, Volume ,Up_Down). Lag_1 - Lag_5 are the returns from previous day to previous 5 day returns. 
+
+# Importing Data
+```{r}
+import_data<-read.csv('nasdaq_lagged.csv')
+data<-import_data%>%mutate(movement=ifelse(Up_Down=='Up',1,-1))
+```
+
+# Checking for Incomplete Data and Duplicates
+```{r}
+sum(is.na(data))
+sum(duplicated(data))
+```
+
+# Descriptive Statistics Overall
+```{r}
+stat <- data %>%
+  select(-Year)%>%
+  pivot_longer(-Up_Down) %>%
+    group_by(Up_Down,name)%>%
+  summarise(min = min(value), 
+            Q1 = quantile(value, 0.25),
+            Median = median(value),
+            Average = mean(value),
+            Q3 = quantile(value, 0.75),
+            Max = max(value),
+            SD = sd(value),
+            IQR = IQR(value))
+
+stat%>%kable(digits =2)
+```
+
+# Descriptive Statistic by Year
+```{r}
+yearstat <- data %>%
+  select(-Up_Down)%>%
+  pivot_longer(-Year) %>%
+    group_by(Year,name)%>%
+  summarise(min = min(value), 
+            Q1 = quantile(value, 0.25),
+            Median = median(value),
+            Average = mean(value),
+            Q3 = quantile(value, 0.75),
+            Max = max(value),
+            SD = sd(value),
+            IQR = IQR(value))
+```
+
+```{r}
+direction<-yearstat%>%filter(name == 'movement')
+
+direction%>%kable(digits =2)
+```
+
+```{r}
+import_data%>%select(-Year)%>%ggpairs(labs(title= 'Pairs Plot for NASDAQ Return Data'))
+```
+
+

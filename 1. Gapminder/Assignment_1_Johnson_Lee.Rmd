@@ -1,0 +1,332 @@
+---
+title: "Assignment_1_AFM346"
+author: "Johnson_Lee"
+date: "5/15/2022"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    theme: lumen
+---
+
+## Introduction
+### Purpose
+This report aims to further understand and learn about the Gapminder dataset through conducting an Exploratory Data Analysis on the Gapminder dataset using visualization and descriptive statistics. At the end the findings are used to generate three additional interesting questions that are of interest to the author
+
+### Packages
+The packages used to aid the creation of this report are shown below
+```{r , warning=FALSE, message=FALSE}
+library(gapminder)
+library(dplyr)
+library(ggplot2)
+```
+
+### Dataset
+The Gapminder dataset is a compilation of data from many different data sources including the World Bank.
+
+The source of the dataset that will be used in this exercise is retrieved <http://www.gapminder.org/data/>.
+
+The dataset consist of **6** variables which can be seen in the table below with description of each. In the filtered and complete dataset there are **1704** rows(observations) while the unfiltered and incomplete dataset have **3313** rows.
+
+```{r, echo=FALSE}
+d <- cbind(Variable = c('country','continent','year','lifeExp','pop','gdpPercap'), Description = c('Consist of 142 countries with 12 observation per country','Consist of 5 continents (Africa, Americas, Asia, Europe, Oceania)','Years range from 1952 to 2007 in 5 year intervals','Life Expectancy at the time of birth, measured in years','Population of demographic','GDP per Capita measured in US$ that are inflation adjusted'))
+knitr::kable(d,caption = "Variable and Description")
+```
+
+## Description of the Variables
+There are two types of variables within the dataset identifiers and metrics.
+
+### Identifiers
+This type of variable is used as a label to identify certain observation and usually observed rather than measured examples of this in the dataset would be **country (Country)**, **continent (Continent)** and **year (Year)**.
+
+### Metrics
+This type of variable consist of measured values. Some examples within the dataset are **lifeExp (Life Expectancy)**,**Pop (Population)** and **gdpPercap (GDP per Capita)**
+
+## Explore the Identifiers
+The identifiers were analyzed individually below and shows a high level overview of what to expect from the data which provides the user with a broad understanding to the data. To gain a better grasp over the data it would be beneficial to group them together. An example of grouping them would be to look at what countries fall within a certain continent, this could be done by filtering for a certain continent and seeing the country output. This will help the user better understand the data.
+
+### Identifier 1 (Country)
+There are 142 unique values associated the result can be seen below. See the result for the entire list in the **APPENDIX A** as it is too large to fit 
+```{r}
+length(unique(gapminder$country))
+anyNA(gapminder$country)
+```
+
+### Identifier 2 (Continent)
+There are 5 unique values associated with the dataset the result can be seen below.
+```{r}
+table(gapminder$continent)
+length(unique(gapminder$continent))
+anyNA(gapminder$continent)
+```
+
+### Identifier 3 (Year)
+There are 12 unique values associated with the dataset the result can be seen below.
+```{r}
+table(gapminder$year)
+length(unique(gapminder$year))
+anyNA(gapminder$year)
+```
+
+## Explore the Metrics
+### Metric Variables 
+#### Metric 1 (Life Expectancy)
+```{r}
+stats_lifeExp <- gapminder %>%
+  select(lifeExp) %>%
+  summarise(min_lifeExp=min(lifeExp),
+            q1_lifeExp = quantile(lifeExp, 0.25),
+            median_lifeExp = median(lifeExp),
+            average_lifeExp = mean(lifeExp),
+            q3_lifeExp = quantile(lifeExp,0.75),
+            max_lifeExp=max(lifeExp),
+            sd_lifeExp = sd(lifeExp, 0.75),
+            iqr_lifeExp=IQR(lifeExp)
+  )
+
+knitr::kable(stats_lifeExp)
+```
+
+#### Metric 2 (Population)
+```{r}
+stats_pop <- gapminder %>%
+  select(pop) %>%
+  summarise(min_pop=min(pop),
+            q1_pop = quantile(pop, 0.25),
+            median_pop = median(pop),
+            average_pop = mean(pop),
+            q3_pop = quantile(pop,0.75),
+            max_pop=max(pop),
+            sd_pop = sd(pop, 0.75),
+            iqr_pop=IQR(pop)
+  )
+
+knitr::kable(stats_pop)
+```
+
+#### Metric 3 (GDP Per Capita)
+```{r}
+stats_gdpPercap <- gapminder %>%
+  select(gdpPercap) %>%
+  summarise(min_gdpPercap=min(gdpPercap),
+            q1_gdpPercap = quantile(gdpPercap, 0.25),
+            median_gdpPercap = median(gdpPercap),
+            average_gdpPercap = mean(gdpPercap),
+            q3_gdpPercap = quantile(gdpPercap,0.75),
+            max_gdpPercap=max(gdpPercap),
+            sd_gdpPercap = sd(gdpPercap, 0.75),
+            iqr_gdpPercap=IQR(gdpPercap)
+  )
+
+knitr::kable(stats_gdpPercap)
+```
+
+### Grouped by Continents
+#### Metric 1 (Life Expectancy grouped by Continent)
+```{r}
+stats_lifeExp <- gapminder %>%
+  select(lifeExp,continent) %>%
+  group_by(continent)%>%
+  summarise(min_lifeExp=min(lifeExp),
+            q1_lifeExp = quantile(lifeExp, 0.25),
+            median_lifeExp = median(lifeExp),
+            average_lifeExp = mean(lifeExp),
+            q3_lifeExp = quantile(lifeExp,0.75),
+            max_lifeExp=max(lifeExp),
+            sd_lifeExp = sd(lifeExp, 0.75),
+            iqr_lifeExp=IQR(lifeExp)
+  )
+
+knitr::kable(stats_lifeExp)
+```
+
+#### Metric 2 (Population grouped by Continent)
+```{r}
+stats_pop <- gapminder %>%
+  select(pop,continent) %>%
+  group_by(continent)%>%
+  summarise(min_pop=min(pop),
+            q1_pop = quantile(pop, 0.25),
+            median_pop = median(pop),
+            average_pop = mean(pop),
+            q3_pop = quantile(pop,0.75),
+            max_pop=max(pop),
+            sd_pop = sd(pop, 0.75),
+            iqr_pop=IQR(pop)
+  )
+
+knitr::kable(stats_pop)
+```
+
+#### Metric 3 (GDP Per Capita grouped by Continent)
+```{r}
+stats_gdpPercap <- gapminder %>%
+  select(gdpPercap,continent) %>%
+  group_by(continent)%>%
+  summarise(min_gdpPercap=min(gdpPercap),
+            q1_gdpPercap = quantile(gdpPercap, 0.25),
+            median_gdpPercap = median(gdpPercap),
+            average_gdpPercap = mean(gdpPercap),
+            q3_gdpPercap = quantile(gdpPercap,0.75),
+            max_gdpPercap=max(gdpPercap),
+            sd_gdpPercap = sd(gdpPercap, 0.75),
+            iqr_gdpPercap=IQR(gdpPercap)
+  )
+
+knitr::kable(stats_gdpPercap)
+```
+
+### Outliers (Overall)
+#### Outlier in Life Expectancy
+Through the chart below it can be concluded that there are no outliers for life expectancy as all data points fall within 1.5IQR of Q1 and Q3.
+
+```{r}
+gapminder %>%
+  select(lifeExp) %>%
+  ggplot(aes(y = lifeExp))+
+    geom_boxplot()+theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+```
+
+#### Outlier in Population
+Through the chart below we can clearly see that there are multiple outliers for population  as data points do not fall within 1.5IQR of Q3.
+```{r}
+gapminder %>%
+  select(pop) %>%
+  ggplot(aes(y = pop))+
+    geom_boxplot()+theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+```
+
+#### Outlier in GDP Per Capita
+Through the chart below we can clearly see that there are multiple outliers for population  as data points do not fall within 1.5IQR of Q3.
+```{r}
+gapminder %>%
+  select(gdpPercap) %>%
+  ggplot(aes(y = gdpPercap))+
+    geom_boxplot()+theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+```
+
+### Outliers (By Continents)
+#### Outlier in Life Expectancy
+When taking a deeper dive into life expectancy data by continents Oceania and Asia are the only continent without outliers as Africa, Americas and Europe have data point outside of Q1- 1.5IQR or Q3+1.5IQR
+```{r}
+gapminder %>%
+  select(lifeExp,continent) %>%
+  group_by(continent)%>%
+  select(continent,lifeExp) %>%
+  ggplot(aes(x = continent, y = lifeExp))+
+    geom_boxplot()+labs(x='Continents')
+```
+
+#### Outlier in Population
+When taking a deeper dive into population data by continents Oceania is the only continent without outliers as all other continents have data point outside of Q3+1.5IQR
+```{r}
+gapminder %>%
+  select(pop,continent) %>%
+  group_by(continent)%>%
+  select(continent,pop) %>%
+  ggplot(aes(x = continent, y = pop))+
+    geom_boxplot()+labs(x='Continents')
+```
+
+#### Outlier in GDP Per Capita
+When taking a deeper dive into GDP Per Capita data by continents all continents have outliers as the data points are outside of Q3+1.5IQR
+```{r}
+gapminder %>%
+  select(gdpPercap,continent) %>%
+  group_by(continent)%>%
+  select(continent,gdpPercap) %>%
+  ggplot(aes(x = continent, y = gdpPercap))+
+    geom_boxplot()+labs(x='Continents')
+```
+
+### Histogram
+#### Life Expectancy
+```{r}
+gapminder %>%
+  select(lifeExp)%>%
+ggplot(aes(x=lifeExp)) + geom_histogram()+labs(x='Life Expectancy')
+```
+
+#### Population
+```{r}
+gapminder %>%
+  select(pop)%>%
+ggplot(aes(x=pop)) + geom_histogram()+labs(x='Population')
+```
+
+#### GDP Per Capita
+```{r}
+gapminder %>%
+  select(gdpPercap)%>%
+ggplot(aes(x=gdpPercap)) + geom_histogram()+labs(x='GDP Per Capita')
+```
+
+### Outlier by Year and faceted by Continents
+##### Boxplot of Life Expectancy
+Through the boxplot of the 5 continents it can be seen all 5 continents are increasing in Life Expectancy over time. Asia's boxplot distribution of life expectancy is the widest and has the lowest range in 1952 by 2007 the range has reduce significantly. It would be worth exploring what lead to this change and why Africa went the opposite direction.
+```{r}
+gapminder%>%
+  select(lifeExp,year,continent)%>%
+  ggplot(aes(x =as.factor(year) , y = lifeExp))+
+  facet_wrap(vars(continent), nrow = 1,scales='free_x') +
+    geom_boxplot()+labs(x='Life Expectancy')+theme(axis.text.x = element_text(angle = 90,size=8))+ theme(aspect.ratio=3/1)
+```
+
+#### Boxplot of Population
+Through the plots below of the population faceted by continents and isolated to year it can be seen the outliers data points are increasing in value which matches how globalization has been increasing the population growth. It would be interesting to see if the outliers are all the same countries over the years.
+```{r}
+gapminder%>%
+  select(pop,year,continent)%>%
+  ggplot(aes(x = pop, y = as.factor(year)))+
+  facet_wrap(vars(continent), nrow = 2,scales='free') +
+    geom_boxplot()+labs(x='Population')
+```
+
+#### Boxplot of GDP Per Capita
+From the output below of GDP Per Capita faceted by continent and shown by years it is apparent that most region have outliers that do not exactly fit into the distribution as certain country have stronger GDP per Capita. It would be worth investigating further into the outlier to see what countries constitues them.
+```{r}
+gapminder%>%
+  select(gdpPercap,year,continent)%>%
+  ggplot(aes(x = gdpPercap, y = as.factor(year)))+
+  facet_wrap(vars(continent), nrow = 2, scales='free') +
+    geom_boxplot()+labs(x='GDP Per Capita')
+```
+
+## Explore the Relationships between Variables
+### Linear Correlation of GDP Per Capita and Life Expectancy
+```{r}
+gapminder %>%
+    select(gdpPercap, lifeExp) %>%
+    cor()
+```
+
+### Scatter Plot of GDP Per Capita and Life Expectancy by Year, and color-coded by Continents
+Overall it seems GDP Per Capita does not significantly impact life expectancy as throughout the years it can be seen the data points form a flat line after reaching around 10,000 GDP Per Capita. As technology advances over time we see that the life expectancy has increased from ~70 to ~80.
+
+From all the time period plotted Europe tends to have one of the highest life expectancy and GDP Per Capita as the points in blue representing Europe can be spotted at the top right of each chart. While Africa's data point seems to always be in the bottom left corner. I believe Africa's data points positioning is due to the most nation within the continents are developing countries so naturally the GDP per Capita is low and with technology that is not as advance their life expectancy is lower.
+
+```{r}
+gapminder%>%
+  select(gdpPercap,year,lifeExp,continent)%>%
+  ggplot(aes(x =gdpPercap, y = lifeExp,col=continent))+
+  facet_wrap(vars(year), nrow = 4,scales='free_x') +
+    geom_point()+theme(axis.text.x = element_text(angle = 90))+theme(aspect.ratio=0.3)
+```
+
+## Conclusion
+1. The boxplots created for each region were skewed heavily by the countries that may not be of significance to us so it would be interesting to see what the boxplot would look like if we took the Top 10 country in each category and recreated the distribution
+2. It would be interesting to look into other metrics that would provide more context on how the citizens are doing such as happiness and social welfare. This would help us better understand why GDP Per Capita, Life Expectancy and Population look the way they do.
+3. If the country over time could be classified as developing or developed it would allow the viewer to see the transition and how each metric aid the transition.
+
+## Appendix
+### Appendix A
+```{r}
+table(gapminder$country)
+```

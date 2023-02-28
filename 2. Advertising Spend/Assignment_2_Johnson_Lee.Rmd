@@ -1,0 +1,371 @@
+---
+title: "Assignment-2-AFM346"
+author: "Johnson_Lee"
+date: '2022-05-29'
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    theme: lumen
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(tidymodels)
+library(ggplot2)
+```
+
+## Introduction
+
+As a statistical consultant, I have been hired by the client and provided a dataset of sales of a product in 200 different markets advertisement spending through 3 different media channels. Hence I will be working with 4 variables (`sales`,`TV`,`radio`,`newspaper`) and 200 observations to investigate the relationship between sales and the media channels.
+
+The objective of this investigation would be to learn about the relationship of sales and media channels. Then using that knowledge to create a model that is able to accurately predict product sales on the basis of the media budget. The client hopes that we can create the model mentioned above as this will help them optimize media advertising spending which will indirectly increase sales.
+
+A high level summary of how the model will be created includeds taking the data at hand and dividing it into training, testing and validation dataset. The training dataset will be the bulk of the data used in developing the initial model using KNN and linear modelling method and validating them with the validation dataset. Once the opitmal model using the two method is determined the entire testing and training dataset will be applied to see which generates a better result.
+
+From the analysis that can be seen below it was concluded that the KNN model (k = 4) was the best model that could be used to estimate sales based on predictors of (TV, Radio and Newspaper).
+
+### Exploratory Data Analysis
+To start the investigation the data was imported and the first column was removed as it only provides the entry number which will not be helpful in our analysis
+```{r message=FALSE}
+ad_sales <- read_csv('Advertising.csv') %>%select(-...1)
+```
+To get a better understanding of the relationship of the data a pairwise table of scatter plots and correlations were created below.
+```{r message=FALSE}
+library(GGally)
+ad_sales %>%
+    ggpairs()
+```
+
+Some interesting takeaways from the output above were:
+
+1. Sales seems to be in a normal distribution that is slightly right skewed , while advertisement spending for newspaper & radio seem to be in a right tailed distribution and advertisement spending for TV seem to be in a bi-modal distribution. The distribution shows that radio and newspaper advertisement spending tends to be on the low end while TV advertisement spending is spread throughout the range.
+
+2. The correlation between sales and the three media channel are very different with TV showing a strong correlation at ~0.782 and radio showing a moderate correlation at ~0.576 and a weak correlation for newspaper at ~0.228. This would suggest that TV and radio could potentially be used to predict sales since they are somewhat correlated.
+
+3. Among the media channels, newspaper and radio has ~0.354 correlation which is significantly different compared to the correlation between the other media channels.
+
+4. Reflecting the observation made in **2.** the scatter plot of the three media channels against sales shows a similar story. TV and Sales form a distribution that looks easily fittable with a natural logarithm hence the strong correlation. While radio and sales form a distribution that could be fitted with a linear regression but wouldn't capture all the points so a weaker correlation but still existing. Lastly the distribution of newspaper and sales does not show a clear way to be fitted hence a weak correlation. Between the different media channels the scatter plot does not provide much as they are all clustered together
+
+### Approach to Splitting Data
+
+Below the data are split into training, testing and validation. The dataset is first divided into `test_data` and `other_data`. Validation and training make up the `other_data`. As implied in the name `training_data` is a major part of the data that is used to train the initial model and to prevent over fitting to the training data. `validation_data` is used to ensure the model created works not only on the `training_data`. Lastly `test_data` is used as a final confirmation and usually smallest portion of data.
+
+`prop=0.7` and `strata=sales` were the parameters used in splitting the data. `prop=0.7` puts 70% into training (in our case `other_data`) and 30% into `test_data`. `strata=sales` is used to stratified random sample the data to ensure the data in each of the divided dataset is not over represented. This is done as we observed the sales data was slightly right skewed
+
+```{r}
+tidymodels_prefer()
+set.seed(123)
+ad_sales_split<-initial_split(ad_sales, prop = 0.70,strata=sales)
+ad_sales_split
+```
+
+```{r}
+other_data<-training(ad_sales_split)
+test_data<-testing(ad_sales_split)
+set.seed(456)
+other_data_split<-initial_split(other_data, prop = 0.70,strata=sales)
+training_data<-training(other_data_split)
+validation_data<-testing(other_data_split)
+```
+
+### Performance Metrics
+
+Throughout the output below the model will be evaluated on three metrics (MAE,RMSE,RSQ) but RMSE will be used for optimizing and fine tuning the model. Selection to use RMSE was based on the knowledge RSQ is only able to accurately capture linear regression which would not work well with KNN models. MAE and RMSE both are adaptation to MSE (Mean Squared Error). The main difference is MAE looks at the mean difference between the actual value vs predicted one where it punishes all error equally, while RMSE takes the square root of MSE which amplifies the error and punishes the error more if it is more significant. For MAE and RMSE the lower the output the better as it shows the points are closer to the predicted values, while RSQ is better the closer it is to 1.
+
+Due to wanting the model to accurately capture the best result it was decided penalizing a large error would be the best way to approach measuring model performance hence RMSE was used.
+
+## KNN
+
+Below the KNN method is applied. I start off by applying it to the training dataset with k values of 4,8,12 and computing the performance of each model as summarized in the output below
+
+### Training Results
+```{r}
+knn_model_4 <-
+    nearest_neighbor(neighbors = 4) %>%
+    set_engine("kknn") %>%
+    set_mode("regression")
+
+knn_4_fit <-
+    knn_model_4 %>%
+    fit(sales ~ TV+radio+newspaper, data = training_data)
+
+knn_model_8 <-
+    nearest_neighbor(neighbors = 8) %>%
+    set_engine("kknn") %>%
+    set_mode("regression")
+
+knn_8_fit <-
+    knn_model_8 %>%
+    fit(sales ~ TV+radio+newspaper, data = training_data)
+
+knn_model_12 <-
+    nearest_neighbor(neighbors = 12) %>%
+    set_engine("kknn") %>%
+    set_mode("regression")
+
+knn_12_fit <-
+    knn_model_12 %>%
+    fit(sales ~ TV+radio+newspaper, data = training_data)
+
+predict_knn_train_4 <- predict(knn_4_fit,new_data=training_data) %>%rename(y_predict_4 = .pred)
+
+predict_knn_train_8 <- predict(knn_8_fit,new_data=training_data) %>%rename(y_predict_8 = .pred)
+
+predict_knn_train_12 <- predict(knn_12_fit,new_data=training_data) %>%rename(y_predict_12 = .pred)
+
+training_data <- training_data %>%bind_cols(predict_knn_train_4,predict_knn_train_8,predict_knn_train_12)
+```          
+
+```{r}
+metrics_knn_training_4 <- metrics(training_data,truth=sales,estimate = y_predict_4)%>%
+    mutate(k = 4, 
+           dataset = "training")
+metrics_knn_training_8 <- metrics(training_data,truth=sales,estimate = y_predict_8)%>%
+    mutate(k = 8, 
+           dataset = "training")
+metrics_knn_training_12 <- metrics(training_data,truth=sales,estimate = y_predict_12)%>%
+    mutate(k = 12, 
+           dataset = "training")
+
+metrics_knn_training <- bind_rows(metrics_knn_training_4,
+                               metrics_knn_training_8,
+                               metrics_knn_training_12)
+
+metrics_knn_training_wide <- metrics_knn_training %>%
+    pivot_wider(id_cols = NULL,
+                names_from = .metric, 
+                values_from = .estimate)
+metrics_knn_training_wide %>%
+    knitr::kable(digits = 4,
+          caption = "KNN Training Metrics")
+```
+
+### Validation Results
+The same process that was applied above in the training section was done here except training dataset has been swapped to validation dataset. The k value still remain at 4,8,12. 
+
+```{r}
+knn_4_valid_fit <-
+    knn_model_4 %>%
+    fit(sales ~ TV+radio+newspaper, data = validation_data)
+
+knn_8_valid_fit <-
+    knn_model_8 %>%
+    fit(sales ~ TV+radio+newspaper, data = validation_data)
+
+knn_12_valid_fit <-
+    knn_model_12 %>%
+    fit(sales ~ TV+radio+newspaper, data = validation_data)
+
+predict_knn_valid_4 <- predict(knn_4_valid_fit,new_data=validation_data) %>%rename(y_valid_predict_4 = .pred)
+
+predict_knn_valid_8 <- predict(knn_8_valid_fit,new_data=validation_data) %>%rename(y_valid_predict_8 = .pred)
+
+predict_knn_valid_12 <- predict(knn_12_valid_fit,new_data=validation_data) %>%rename(y_valid_predict_12 = .pred)
+
+validation_data <- validation_data %>%bind_cols(predict_knn_valid_4,predict_knn_valid_8,predict_knn_valid_12)
+```          
+
+```{r}
+metrics_knn_valid_4 <- metrics(validation_data,truth=sales,estimate = y_valid_predict_4)%>%
+    mutate(k = 4, 
+           dataset = "validation")
+metrics_knn_valid_8 <- metrics(validation_data,truth=sales,estimate = y_valid_predict_8)%>%
+    mutate(k = 8, 
+           dataset = "validation")
+metrics_knn_valid_12 <- metrics(validation_data,truth=sales,estimate = y_valid_predict_12)%>%
+    mutate(k = 12, 
+           dataset = "validation")
+
+metrics_knn_valid <- bind_rows(metrics_knn_valid_4,
+                               metrics_knn_valid_8,
+                               metrics_knn_valid_12)
+
+metrics_knn_valid_wide <- metrics_knn_valid %>%
+    pivot_wider(id_cols = NULL,
+                names_from = .metric, 
+                values_from = .estimate)
+metrics_knn_valid_wide %>%
+    knitr::kable(digits = 4,
+          caption = "KNN Validation Metrics")
+```
+
+### Comments
+
+In the figure below it can be seen that the best results are all associated with (k = 4). Using the metric (RSME) previously identified it can be seen that the validation dataset performs better than training. This could either be a over fitting or the validation data is similar to the training data the model was built on so it fits better. The difference is not significant so it is most likely the latter reason for this occurrence.
+
+```{r message=FALSE}
+metrics_combined<-rbind(metrics_knn_valid_4,metrics_knn_valid_8,metrics_knn_valid_12,metrics_knn_training_4,metrics_knn_training_8,metrics_knn_training_12)
+metrics_combined%>%select(.metric,.estimate,dataset,k)%>%ggplot(aes(x = k, y = .estimate))+geom_point(aes(color=dataset))+geom_line(aes(group = dataset)) +facet_wrap(vars(.metric),scales='free')
+```
+
+## Linear Regression
+
+In this section there are a total of 4 models. Model 1 looked at all sales against all the media channel's spending which led to model 2 where newspaper was removed due it being statistically insignificant. Model 1 and 2 are ran on training dataset and Model 3 and 4 uses the validation dataset to confirm the findings. 
+
+```{r}
+lm_model <-
+    linear_reg() %>%
+    set_mode("regression") %>%
+    set_engine("lm")
+```
+
+#### Linear Model 1 (All Media Channels)
+```{r}
+lm_training_fit <-
+    lm_model %>%
+    fit(sales ~ TV+radio+newspaper, data = training_data)
+
+tidy(lm_training_fit)%>%knitr::kable(digits = 4,
+          caption = "Linear Model 1 Using Training Data (All Media Channels)")
+```
+
+#### Linear Model 2 (TV+Radio)
+
+We have been given a significance threshold of 0.01 and the output above shows newspaper has a p-value of **0.4232**. This exceeds the threshold which means newspaper is statistically insignificant, hence it was removed.
+```{r}
+lm_training_fit_TV_radio <-
+    lm_model %>%
+    fit(sales ~ TV+radio, data = training_data)
+
+tidy(lm_training_fit_TV_radio)%>%knitr::kable(digits = 4,
+          caption = "Linear Model 2 Using Training Data (TV and radio)")
+```
+
+### Training Results
+#### Linear Model 1 Metrics (All Media Channels)
+
+```{r}
+predict_lm_training <- predict(lm_training_fit,new_data=training_data)%>%rename(y_lm_training = .pred) 
+training_data<-training_data%>%bind_cols(predict_lm_training)
+metrics_lm_training<-metrics(training_data,truth=sales,estimate = y_lm_training)%>%
+    mutate(dataset = "Training (All)")
+metrics_lm_training%>%knitr::kable(digits = 4,
+          caption = "linear Model 1 Metrics Using Training Data (All Media Channels)")
+```
+#### Linear Model 2 Metrics (TV + Radio)
+
+```{r}
+predict_lm_training_TV_radio <- predict(lm_training_fit_TV_radio,new_data=training_data)%>%rename(y_lm_training_TV_radio = .pred) 
+training_data<-training_data%>%bind_cols(predict_lm_training_TV_radio)
+metrics_lm_training_TV_radio <-metrics(training_data,truth=sales,estimate = y_lm_training_TV_radio)%>%
+    mutate(dataset = "Training")
+metrics_lm_training_TV_radio%>%knitr::kable(digits = 4,
+          caption = "Linear Model 2 Metrics Using Training Data (TV and radio)")
+```
+### Validation Results
+#### Linear Model 3 (All Media Channels)
+
+```{r}
+lm_valid_fit <-
+    lm_model %>%
+    fit(sales ~ TV+radio+newspaper, data = validation_data)
+
+tidy(lm_valid_fit)%>%knitr::kable(digits = 4,
+          caption = "linear Model 3 Using Validation Data (All Media Channels)")
+predict_lm_valid <- predict(lm_valid_fit,new_data=validation_data)%>%rename(y_lm_valid = .pred) 
+validation_data<-validation_data%>%bind_cols(predict_lm_valid)
+metrics_lm_valid<-metrics(validation_data,truth=sales,estimate = y_lm_valid)%>%
+    mutate(dataset = "Validation (All)")
+metrics_lm_valid%>%knitr::kable(digits = 4,
+          caption = "linear Model 3 Metrics Using Validation Data (All Media Channels)")
+```
+
+#### Linear Model 4 (TV + Radio)
+```{r}
+lm_valid_fit_TV_radio <-
+    lm_model %>%
+    fit(sales ~ TV+radio, data = validation_data)
+
+tidy(lm_training_fit_TV_radio)%>%knitr::kable(digits = 4,
+          caption = "linear Model 4  Using Validation Data (TV and radio)")
+
+predict_lm_valid_TV_radio <- predict(lm_valid_fit_TV_radio,new_data=validation_data)%>%rename(y_lm_valid_TV_radio = .pred) 
+validation_data<-validation_data%>%bind_cols(predict_lm_valid_TV_radio)
+metrics_lm_valid_TV_radio<-metrics(validation_data,truth=sales,estimate = y_lm_valid_TV_radio)%>%
+    mutate(dataset = "Validation")
+metrics_lm_valid_TV_radio%>%knitr::kable(digits = 4,
+          caption = "linear Model 4 Metrics Using Validation Data (TV and radio)")
+```
+
+### Comments
+
+The model that took in three media channels as the predictor for sales generated the best results on both training and validation data. The validation data once again just like in KNN shows a stronger performance compared to the training. It also differs substantially on a RMSE basis. RSQ could be considered as we are fitting it to a linear model. It can be seen the performance of the validation data generates RSQ of 0.9263 while training is 0.8955. 
+
+```{r}
+metrics_combined_lm<-rbind(metrics_lm_training,metrics_lm_training_TV_radio,metrics_lm_valid,metrics_lm_valid_TV_radio)
+metrics_combined_lm%>%select(.metric,.estimate,dataset)%>%ggplot(aes( x=dataset,y = .estimate))+geom_point()+facet_wrap(vars(.metric),scales='free')+theme(axis.text.x = element_text(angle = 90))
+
+metrics_combined_lm%>%pivot_wider(id_cols = dataset,
+                names_from = .metric, 
+                values_from = .estimate)%>%
+        knitr::kable(digits = 4,
+          caption = "Linear Models Metrics (All Models)")
+```
+## Model Selection & Testing
+
+The model selected for KNN is when (k = 4) and for linear model it is the one that contained all media channels as predictor for sales.
+
+```{r}
+knn_4_other_fit<-
+    knn_model_4 %>%
+    fit(sales ~ TV+radio+newspaper, data = other_data) 
+
+predict_knn_test_4 <- predict(knn_4_other_fit,new_data=test_data) %>%rename(y_test_predict_4 = .pred)
+test_data<-test_data%>%bind_cols(predict_knn_test_4)
+metrics_knn_test_4<-metrics(test_data,truth=sales,estimate = y_test_predict_4)%>%
+    mutate(model = "KNN")
+metrics_knn_test_4%>%knitr::kable(digits = 4,
+          caption = "KNN Metric Using Test Data")
+```
+
+#### Linear Model Using Training + Validation Data 
+
+```{r}
+lm_other_fit <-
+    lm_model %>%
+    fit(sales ~ TV+radio+newspaper, data = other_data)
+
+tidy(lm_other_fit)%>%knitr::kable(digits = 4,
+          caption = "Linear Model (Using Testing + Validation Data)")
+
+predict_lm_test <- predict(lm_other_fit,new_data=test_data)%>%rename(y_lm_test = .pred) 
+test_data<-test_data%>%bind_cols(predict_lm_test)
+metrics_lm_test<-metrics(test_data,truth=sales,estimate = y_lm_test)%>%
+    mutate(model = "LM")
+metrics_lm_test%>%knitr::kable(digits = 4,
+          caption = "Linear Model Metric Using Test Data")
+```
+
+```{r}
+metrics_combined_lm<-rbind(metrics_knn_test_4,metrics_lm_test)
+metrics_combined_lm%>%select(.metric,.estimate,model)%>%ggplot(aes( x='',y = .estimate))+geom_point(aes(color=model))+facet_wrap(vars(.metric),scales='free')
+
+metrics_combined_lm%>%pivot_wider(id_cols = model,
+                names_from = .metric, 
+                values_from = .estimate)%>%
+        knitr::kable(digits = 4,
+          caption = "Linear Models Metrics (All Models)")
+```
+
+## Conclusion
+
+Based on the results shown above it is very clear regardless of what metrics is used to assess the model out of (MAE,RSME,RSQ) the KNN model seem to be the most suitable model to be used. It has a significantly lower MAE and RSME compared to linear regression while a higher RSQ.
+
+The KNN model relies on taking data points that are closest to create a model and given we have 200 datapoints to work with and they are all within a reasonable range, it can be believed that the neighbors would be an effective representation to use for the model. If the points were more spread out in the EDA stage, then KNN approach would need to be reconsidered or if the total budget was known and a linear regression was known to exist then the model used would be reconsidered.
+
+```{r, echo = FALSE}
+all_4_knn<-data.frame(dataset=c("training","validation","test"),
+    rmse=c(0.8591,0.8498,1.1044),
+    rsq=c(0.9749,0.9746,0.9645),
+    mae=c(0.5830,0.6673,0.8377))
+
+all_4_knn%>%knitr::kable(digits = 4)
+
+```
+
+In the table above the performance metrics of each model can be seen between training, validation, and test sets. RMSE seem to be too optimistic between the training and validation dataset. The validation dataset model is more accurate which should not have been the case as it has less data point and is not fitted into the model so it should have been less accurate. 
+
+Validation dataset was essential to properly model in this investigation. The purpose of validation dataset was to confirm how strong the model created through the training dataset and to see if it was overfitted. In the analysis above only one validation set was used which could effect the output of determining whether the training dataset is overfitted as the data point in the validation set could be highly similar to the training set. To mitigate this, multiple validation set can be created through random sampling so each set has different data points which will allow it to be tested multiple time for confirmation.
